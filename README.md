@@ -1,656 +1,706 @@
-# Private Cloud Runbook
+# Sovereign Architecture: Bare-Metal to Virtual Lab Runbook
 
-## 1. Setup Host Machine
+An automated, hyper-efficient blueprint for transforming standard consumer hardware into a deterministic, containerized local cloud infrastructure. By adhering to the **"Thin Host"** paradigm, this architecture decouples the primary development runtime environments from the physical operating system, establishing absolute workspace isolation, configuration reproducibility, and hardware performance efficiency.
 
-- Pre-install steps
-  - Run this command to make sure you’ve enabled virtualization in on your computer.
+## 🪐 Core Architecture Highlights
+
+* **The Thin Host Configuration:** Automates the complete provisioning of an Ubuntu 26.04 LTS (Resolute Raccoon) hypervisor host using declarative `autoinstall` directives, enforcing pre-configured GDM custom configurations, dark mode system defaults, and an integrated secrets layout right out of the box.
+
+* **Orchestration Engine (`deploy-vm.sh`):** A single unified control script providing dynamic virtualization command mappings via `virsh` and `qemu-img` with built-in parameter injection for memory allocations (`-m`), vCPU assignments (`-c`), and physical storage resizing (`-s`).
+
+* **Storage Optimization via Linked Clones:** Implements QEMU copy-on-write (COW) backing layers to instantly spin up disposable guest machines without duplicating the underlying 40GB root disk space footprint.
+
+* **Deterministic Configuration Lifecycle:** Leverages local NoCloud cloud-init data-source wrappers to automatically wire up container engines, system packages, global development environments, network configurations, and drop-proof terminal sessions (`byobu`) synchronously before terminating the host thread.
+
+---
+
+## Phase 0: The "Off-Laptop" Preparation
+
+Before you wipe your drive, prepare these three "External Keys" on other devices.
+
+1. **Plug-in host's Ethernet cable:** Make sure your machine is physically plugged in. Otherwise, the installation will fail.
+
+2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive.
+
+3. **The CIDATA USB:** Format a second small USB drive as **FAT32** with the volume label exactly `CIDATA`.
+
+    - Create a directory named `Lifeboat` under `~/Downloads/Lifeboat/`.
+
+      ```bash
+      mkdir $HOME/Downloads/Lifeboat
+      ```
+
+    - Create a file named `meta-data` at `~/Downloads/Lifeboat/` and leave it empty.
+
+      ```bash
+      touch $HOME/Downloads/Lifeboat/meta-data
+      ```
+
+    - Create a file named `user-data` at `~/Downloads/Lifeboat`.
+
+      ```bash
+      cat << 'OUTER_EOF' >> $HOME/Downloads/Lifeboat/user-data
+      #cloud-config
+      autoinstall:
+        version: 1
+        locale: en_US.UTF-8
+        keyboard: {layout: us}
+        timezone: America/New_York
+        identity:
+          hostname: ubuntu-host
+          realname: "Primary Developer"
+          username: devuser
+          # NOTE: You MUST replace this with a real hashed password.
+          # Generate one in your terminal using: mkpasswd -m sha-512
+          password: "$6$EXAMPLERANDOM$HashedPassword..."
+        ssh:
+          install-server: true
+          # NOTE: You MUST replace this with the contents of your id_ed25519.pub
+          # Generate one in your terminal using: ssh-keygen -t ed25519 -C "devuser@ubuntu-host"
+          authorized-keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...your_key... 
+        storage:
+          layout:
+            name: direct
+            match:
+              path: /dev/nvme0n1
+        packages:
+          - qemu-system-x86
+          - qemu-utils
+          - cloud-image-utils
+          - libvirt-daemon-system
+          - libvirt-clients
+          - virt-manager
+          - gimp
+          - tlp
+          - gnupg2
+          - pass
+          - stow
+          - pinentry-gnome3
+          - xclip
+          - curl
+          - jq
+          - whois
+          - usb-creator-gtk
+        snaps:
+          - name: code
+            classic: true
+          - name: slack
+            classic: true
+          - name: zoom-client
+        late-commands:
+          - curtin in-target -- wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+          - curtin in-target -- apt-get install -y /tmp/chrome.deb
+          - curtin in-target -- ubuntu-report send yes
+        user-data:
+          runcmd:
+            # 1. Remove Firefox now that the system is live
+            - snap remove --purge firefox
+
+            # 2. SET SYSTEM-WIDE DESKTOP DEFAULTS VIA DCONF
+            - |
+              mkdir -p /etc/dconf/db/local.d/
+              cat <<EOF > /etc/dconf/db/local.d/00-sovereign-desktop
+              [org/gnome/shell]
+              favorite-apps=['google-chrome.desktop', 'code_code.desktop', 'org.gnome.Ptyxis.desktop', 'slack_slack.desktop', 'zoom-client_zoom-client.desktop', 'virt-manager.desktop', 'org.gnome.Nautilus.desktop']
+
+              [org/gnome/shell/extensions/dash-to-dock]
+              show-trash=true
+              trash-at-the-end=true
+
+              [org/gnome/desktop/interface]
+              color-scheme='prefer-dark'
+              EOF
+              
+              mkdir -p /etc/dconf/profile/
+              cat <<EOF > /etc/dconf/profile/user
+              user-db:user
+              system-db:local
+              EOF
+              
+              dconf update
+
+            # 3. DISABLE GNOME INITIAL SETUP (The "Welcome" Screen & Popup Fix)
+            - |
+              sed -i '/\[daemon\]/a InitialSetupEnable=false' /etc/gdm3/custom.conf
+              for dir in /etc/skel /home/devuser; do
+                mkdir -p "$dir/.config"
+                echo "yes" > "$dir/.config/gnome-initial-setup-done"
+              done
+              chown -R devuser:devuser /home/devuser/.config 2>/dev/null || true
+              apt-get purge -y gnome-initial-setup
+
+            # 4. Modular SSH Configuration Setup for devuser
+            - |
+              mkdir -p /home/devuser/.ssh/conf.d
+              touch /home/devuser/.ssh/config
+              if ! grep -q "^Include conf.d/\*" /home/devuser/.ssh/config; then
+                echo -e "Include conf.d/*\n$(cat /home/devuser/.ssh/config)" > /home/devuser/.ssh/config
+              fi
+              chown -R devuser:devuser /home/devuser/.ssh
+              chmod 700 /home/devuser/.ssh
+              chmod 600 /home/devuser/.ssh/config
+
+            # 5. Install VS Code Extensions
+            - sudo -u devuser code --install-extension ms-vscode-remote.remote-ssh
+            - sudo -u devuser code --install-extension ms-vscode-remote.remote-containers
+
+            # 6. Configure Git for devuser context
+            - [ sudo, -u, devuser, git, config, --global, user.name, "Your Name" ]
+            - [ sudo, -u, devuser, git, config, --global, user.email, "your@email.com" ]
+            - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
+
+            # 7. PERFORMANCE OPTIMIZATIONS (Systemd Services)
+            # Turn off non-essential blocking network checks and debugging overhead
+            - |
+              systemctl disable NetworkManager-wait-online.service
+              systemctl disable fwupd-refresh.service
+              systemctl disable kdump-tools.service
+              systemctl disable apport.service
+              systemctl disable ModemManager.service
+              systemctl disable fstrim.service
+              systemctl enable fstrim.timer
+
+            # 8. SNAP REVISION MANAGEMENT
+            # Mitigate virtual loop device inflation by enforcing strict storage retention limits
+            - snap set system refresh.retain=2
+
+            # 9. KERNEL SERIAL PROBE DISABLING
+            # Patch the GRUB default configuration to bypass legacy UART infrastructure scans
+            - |
+              if [ -f /etc/default/grub ]; then
+                sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash 8250.nr_uarts=0"/' /etc/default/grub
+                update-grub
+              fi
+      OUTER_EOF
+      ```
+
+4. **Generate random salted hashed password**
+
+    - Run the following command to generate a random salted hashed password.
+
+      ```bash
+      mkpasswd -m sha-512 | tee $HOME/Downloads/Lifeboat/hashed_password.txt
+      ```
+
+    - It will output a single line that looks something like this:
+
+      `$6$EXAMPLERANDOM$HashedPassword...`
+
+    - Update your **user-data**
+
+      Copy that entire line and paste it into your host's `user-data` file under the `identity` section:
+
+      ```yaml
+      identity:
+        hostname: ubuntu-host
+        realname: "Primary Developer"
+        username: devuser
+        password: "$6$EXAMPLERANDOM$HashedPassword..."
+      ```
+
+5. **Generate the SSH key**
+
+    - Run this command on the machine you will be using to access your host (e.g., your current laptop):
+
+      ```bash
+      ssh-keygen -t ed25519 -C "devuser@ubuntu-host"
+      ```
+
+    - Follow the Prompts
+      - **Enter file in which to save the key:** Press Enter to accept the default location (`~/.ssh/id_ed25519`).
+      - **Enter passphrase:** It is highly recommended to enter a passphrase. This adds a second layer of security.
+
+    - Identify Your Keys
+      
+      The command creates two files in your `~/.ssh/` directory:
+      - `id_ed25519` **(Private Key):** This stays on your laptop. Never share it.
+      - `id_ed25519.pub` **(Public Key):** This is the one we inject.
+
+    - Extract the Public Key for your **user-data**
+
+      To get the string you need for your autoinstall file, run:
+
+      ```bash
+      cat ~/.ssh/id_ed25519.pub
+      ```
+
+      It will output a single line that looks something like this:
+
+      `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host`
+
+      - Update your **user-data**
+
+        Copy that entire line and paste it into your host's `user-data` file under the `ssh` section:
+
+        ```yaml
+        ssh:
+          install-server: true
+          authorized-keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host
+        ```
+
+      - Add your Key to GitHub
+        - Go to **GitHub Settings > SSH and GPG keys > New SSH Key**.
+        - Paste the key and give it a name like "Thin Host Laptop."
+
+      - Copy your SSH keys to `~/Downloads/Lifeboat`
+
+        ```bash
+        cp $HOME/.ssh/id_ed25519.pub $HOME/.ssh/id_ed25519.pub $HOME/Downloads/Lifeboat/
+        ```
+
+6. **The "Lifeboat" USB:** Copy `~/Downloads/Lifeboat` to a standard storage USB.
+
+## Phase 1: The "Thin Host" Installation
+
+1. Plug both the **Installer** and **CIDATA** drives into your laptop.
+
+2. Reboot machine and press F12 to bring up the boot menu.
+
+3. Boot from the Installer USB. At the GRUB menu, highlight **"Install Ubuntu"**.
+
+## Phase 2: Host Personalization (Secrets & Dotfiles)
+
+Once you log in to your fresh host, establish your sovereignty.
+
+1. Copy contents of Lifeboat USB to `$HOME/Downloads/Lifeboat`
+
+1. **Restore SSH** 
+    - Copy `id_ed25519` and `id_ed25519.pub` to `~/.ssh/`
+
+      ```bash
+      mv $HOME/Downloads/Lifeboat/id_ed25519 $HOME/Downloads/Lifeboat/id_ed25519.pub $HOME/.ssh/
+      ```
+
+    - Restrict permissions on `id_ed25519`
+
+      ```bash
+      chmod 600 ~/.ssh/id_ed25519
+      ```
+
+2. **Set up secrets management**
+    - Generate GPG key
+      ```bash
+      gpg --full-generate-key   
+      
+      # At the "Please select what kind of key you want:" prompt, select "(9) ECC (sign and encrypt) *default*"
+      # At the "Please select which elliptic curve you want:" prompt, select "(1) Curver 25519 *default*"
+      # At the "Please specify how long the key should be valid>" prompt, select "0 = key does not expire"
+      # Follow the rest of the prompts
+      ```
+    - Backup GPG key
+      ```bash
+      gpg --export-secret-key <YOUR_KEY_ID> | paperkey --output-type base16 > $HOME/Downloads/Lifeboat/gpg_paper.txt
+      ```
+    - Initialize Pass
+      ```bash
+      pass init <YOUR_KEY_ID>
+      ```
+    - Sync your secrets to your private GitHub repo
+
+      ```bash
+      pass git init
+
+      # pass git config --global user.name "Your Name"
+      # pass git config --global user.email "your@email.com"
+      # pass git config --global init.defaultBranch main
+
+      # Go to GitHub and create a new private repository called "my-passwords"
+
+      pass git remote add origin git@github.com:youruser/my-passwords.git
+      pass git push -u origin main
+      ```
+
+3. **Restore Dotfiles**
 
     ```bash
-    egrep -c '(vmx|svm)' /proc/cpuinfo
+    git clone git@github.com:youruser/private-dotfiles.git ~/.dotfiles
+
+    cd ~/.dotfiles && stow bash nvim git host-only
     ```
 
-    The result should be above `0`.
+## Phase 3: The Virtual Lab
 
-- Create and run `create_dev_host.sh` script below:
+### 1. Create an executable installation script
+
+1. Create `deploy-vm.sh` at `~/Downloads/`
 
     ```bash
-    #!/usr/bin/env bash
-    # Make executable: chmod +x create_dev_host.sh
-    # Run: sudo ./create_dev_host.sh
+    #!/bin/bash
+    # Make executable: chmod +x deploy-vm.sh
+    # Usage: sudo ./deploy-vm.sh <vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
+    # Default: 4096 MiB RAM, 4 vCPUs, 40 GiB Disk (Linked Clone)
 
-    # Unofficial Bash Strict Mode
-    set -o errexit
-    set -o nounset
-    set -o pipefail
-
-    if [[ "${TRACE-0}" == "1" ]]; then
-        set -o xtrace
-    fi
-
-    # Help Menu
-    if [[ "${1-}" =~ ^-*h(elp)?$ ]]; then
-        echo 'Usage: sudo ./create_dev_host.sh'
-        echo 'Bootstraps a vanilla Ubuntu 26.04 environment with development tools.'
-        exit
-    fi
-
-    # Ensure script is run with sudo
-    if [[ $EUID -ne 0 ]]; then
-    echo "This script must be run as root. Please use sudo." 
-    exit 1
-    fi
-
-    # Ensure SUDO_USER is set so we don't break user-specific commands
-    if [[ -z "${SUDO_USER:-}" ]]; then
-        echo "Could not detect SUDO_USER. Please run the script using sudo from a standard user account."
+    # --- 1. Dynamic Variables & Defaults ---
+    VM_NAME=$1
+    if [ -z "$VM_NAME" ]; then
+        echo "❌ Error: No VM name specified."
+        echo "Usage: $0 <vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
         exit 1
     fi
 
-    cd "$(dirname "$0")"
+    MEM=4096
+    CPUS=4
+    DISK=40
 
-    main() {
-        echo -e "\n=== Removing Firefox Snap ==="
-        snap remove --purge firefox
+    shift
 
-        echo -e "\n=== Updating System Packages ==="
-        apt-get update
-        apt-get upgrade -y
+    # --- 2. Flag Handling ---
+    while getopts "dfm:c:s:" opt; do
+      case $opt in
+        d)
+          echo "🔥 Self-Destruct Initiated for $VM_NAME..."
+          sudo virsh destroy "$VM_NAME" 2>/dev/null
+          sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
+          sudo rm -f "/var/lib/libvirt/images/$VM_NAME-meta-data" "/var/lib/libvirt/images/$VM_NAME-seed.iso"
+          echo "✨ Environment cleared."
+          exit 0
+          ;;
+        f)
+          echo "♻️ Force flag detected. Removing local base image..."
+          sudo rm -f "/var/lib/libvirt/images/resolute-base.img"
+          ;;
+        m) MEM=$OPTARG ;;
+        c) CPUS=$OPTARG ;;
+        s) DISK=$OPTARG ;;
+        \?) exit 1 ;;
+      esac
+    done
 
-        echo -e "\n=== Installing QEMU and Virtual Machine Manager ==="
-        add-apt-repository -y universe
+    # --- 3. Internal Paths ---
+    PREFIX=$(echo "$VM_NAME" | sed 's/-vm$//')
+    USER_DATA="./${PREFIX}-user-data.yaml"
+    LIBVIRT_DIR="/var/lib/libvirt/images"
+    BASE_IMG="$LIBVIRT_DIR/resolute-base.img"
+    VM_DISK="$LIBVIRT_DIR/$VM_NAME.qcow2"
+    META_DATA="$LIBVIRT_DIR/$VM_NAME-meta-data"
+    SEED_ISO="$LIBVIRT_DIR/$VM_NAME-seed.iso"
+    BASE_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
+    SHA_URL="https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS"
 
-        apt-get install -y qemu-system-x86 \
-            qemu-utils \
-            libvirt-daemon-system \
-            libvirt-clients \
-            virt-manager 
+    # --- 4. Pre-Flight Checks ---
+    if [ ! -f "$USER_DATA" ]; then
+        echo "❌ Error: Configuration file '$USER_DATA' not found."
+        exit 1
+    fi
 
-        adduser "$SUDO_USER" libvirt
-        adduser "$SUDO_USER" kvm
+    if [ "$EUID" -ne 0 ]; then 
+      echo "Please run as root (sudo) for deployment"
+      exit
+    fi
 
-        echo -e "\n=== Installing Startup Disk Creator ==="
-        apt-get install -y usb-creator-gtk
+    # Detect the real user who invoked sudo and discover their real home directory
+    REAL_USER=${SUDO_USER:-$USER}
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
-        echo -e "\n=== Installing Google Chrome ==="
-        wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/google-chrome.deb
+    # --- 5. Synchronize & Verify Base Image ---
+    if [ ! -f "$BASE_IMG" ]; then
+        echo "📡 Downloading Ubuntu Cloud Image..."
+        wget -c --no-verbose -P "$LIBVIRT_DIR" "$BASE_IMG_URL"
+        mv "$LIBVIRT_DIR/resolute-server-cloudimg-amd64v3.img" "$BASE_IMG" 2>/dev/null
+    fi
+
+    echo "🛡️ Verifying integrity..."
+    curl -s "$SHA_URL" | grep "resolute-server-cloudimg-amd64v3.img" > /tmp/sha256
+    sed -i "s/resolute-server-cloudimg-amd64v3.img/resolute-base.img/" /tmp/sha256
+    (cd "$LIBVIRT_DIR" && sha256sum --check --status /tmp/sha256) || { echo "❌ Checksum failed!"; exit 1; }
+
+    # --- 6. Provision & Seed ---
+    echo "🧹 Cleaning up existing $VM_NAME resources..."
+    sudo virsh destroy "$VM_NAME" 2>/dev/null
+    sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
+
+    echo "🌱 Generating Cloud-Init seed..."
+    cat <<EOF > "$META_DATA"
+    instance-id: $VM_NAME-$(date +%s)
+    local-hostname: $VM_NAME
+    EOF
+    cloud-localds "$SEED_ISO" "$USER_DATA" "$META_DATA"
+
+    echo "💾 Creating linked clone: $VM_DISK (${DISK}GB)..."
+    sudo qemu-img create -f qcow2 -b "$BASE_IMG" -F qcow2 "$VM_DISK" "${DISK}G"
+
+    # --- 7. Launch ---
+    echo "🚀 Launching $VM_NAME ($MEM MiB RAM, $CPUS vCPUs)..."
+    virt-install \
+      --name "$VM_NAME" \
+      --osinfo ubuntu-lts-latest \
+      --cpu host-model \
+      --memory "$MEM" \
+      --vcpus "$CPUS" \
+      --import \
+      --disk path="$VM_DISK" \
+      --disk path="$SEED_ISO",device=cdrom \
+      --network network=default \
+      --graphics none \
+      --noautoconsole
+
+    # --- 8. Post-Flight: Monitor the Black Box ---
+    echo "⏳ Waiting for VM to claim an IP..."
+    MAX_RETRIES=30
+    COUNT=0
+    while [ -z "$VM_IP" ] && [ $COUNT -lt $MAX_RETRIES ]; do
+        VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
+        sleep 2
+        ((COUNT++))
+    done
+
+    if [ -z "$VM_IP" ]; then
+        echo "⚠️ IP detection timed out. Check manually with 'virsh domifaddr $VM_NAME'."
+        exit 1
+    fi
+
+    echo "🚀 $VM_NAME is live at $VM_IP. Waiting for configuration to finish..."
+
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=5 devuser@$VM_IP "cloud-init status --wait"
+
+    # --- 9. Automated SSH Configuration ---
+    echo "⚙️  Wiring up SSH configuration for $VM_NAME..."
+
+    # Ensure the modular directory exists in the true invoking user's home folder
+    mkdir -p "$REAL_HOME/.ssh/conf.d"
+
+    # Create or overwrite the VM's specific config file path dynamically
+    cat << EOF > "$REAL_HOME/.ssh/conf.d/$VM_NAME"
+    Host $VM_NAME
+      HostName $VM_IP
+      User devuser
+      IdentityFile ~/.ssh/id_ed25519
+      ForwardAgent yes
+      IdentitiesOnly yes
+      StrictHostKeyChecking no
+      UserKnownHostsFile /dev/null
+    EOF
+
+    # Ensure permissions and system ownership are handed back to the normal user context
+    chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.ssh/conf.d"
+    chmod 700 "$REAL_HOME/.ssh/conf.d"
+    chmod 600 "$REAL_HOME/.ssh/conf.d/$VM_NAME"
+
+    echo "------------------------------------------------"
+    echo "✅ $VM_NAME is FULLY PROVISIONED and ready!"
+    echo "------------------------------------------------"
+    echo "Please wait a couple of minutes before connecting by typing:"
+    echo "ssh $VM_NAME"
+    echo "as the installation may still be completing."
+    echo "------------------------------------------------"
+    ```
+
+2. Make `deploy-vm.sh` executable
+
+    ```bash
+    chmod +x deploy-vm.sh
+    ```
+
+### 2. Create the Virtual Machines
+
+1. Create the `dotnet-vm` virtual machine
+
+    - Create `dotnet-user-data.yaml` at `~/Downloads/`
+
+      ```bash
+      cat << EOF >> $HOME/Downloads/dotnet-user-data.yaml
+      #cloud-config
+      users:
+        - name: devuser
+          groups: [sudo]
+          shell: /bin/bash
+          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant devuser passwordless sudo
+          lock_passwd: true # 🔒 Locks password authentication entirely
+          ssh_authorized_keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host #
+
+      packages:
+        - docker.io
+        - docker-buildx
+        - git
+        - postgresql-client
+        - curl
+        - jq
+        - htop
+        - ncdu
+        - byobu
+
+      runcmd:
+        # 1. Adding the user to the docker group safely after package installation
+        - usermod -aG docker devuser
         
-        apt-get install -y /tmp/google-chrome.deb
-        rm /tmp/google-chrome.deb
+        # 2. Configuring Git identity for devuser
+        - [ sudo, -u, devuser, git, config, --global, user.name, "Your Name" ]
+        - [ sudo, -u, devuser, git, config, --global, user.email, "your@email.com" ]
+        - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
 
-        echo -e "\n=== Installing Visual Studio Code ==="
-        snap install code --classic
+        # 3. Enable Byobu auto-launch on login for devuser
+        - [ sudo, -u, devuser, byobu-enable ]
+      EOF  
+      ```
 
-        echo -e "\n=== Installing VS Code extensions for user: $SUDO_USER ==="
-        sudo -u "$SUDO_USER" code --install-extension davidanson.vscode-markdownlint
+    - Create the `dotnet-vm` virtual machine
 
-        echo -e "\n=== Installing Slack ==="        
-        snap install slack --classic
+      Run the following command to create `dotnet-vm`
 
-        echo -e "\n=== Installing GIMP ==="
-        apt-get install -y gimp    
+      ```bash
+      sudo ./deploy-vm.sh dotnet-vm -m 4096 -c 4 -s 40 -f
+      ```
 
-        echo -e "\n=== Script execution complete! ==="
+    - SSH into `dotnet-vm`
 
-        read -p "A system reboot is recommended. Reboot now? (y/N) " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            reboot
-        else
-            echo "Please remember to reboot your system later."
-        fi
-    }
+      ```bash
+      ssh dotnet-vm
+      ```
 
-    main "$@"
-    ```
+    - Verify installation
 
-- Post-install steps
-  
-  - Verify that Libvirtd service is started (optional)
-
-    ```bash
-    sudo systemctl status libvirtd.service
-    ```
-
-  - Check virsh status (optional)
-
-    ```bash
-    sudo virsh net-list --all
-    ```
-
-## 2. Create Base Virtual Machine (VM)
-
-1. Create VM in QEMU
-    - File > New Virtual Machine
-       - Local install media (ISO image or CDROM)
-    - VM Name: `tabiri_base`
-    - Memory size: `4096MB`
-    - CPUs: 2
-    - Hard disk size: `50GB`
-2. Install Ubuntu on VM
-    - Your name: `Tabiri Analytics`
-    - Your computer's name: `dev-vm`
-    - Pick a username: `tabiri`
-3. Make VM fit the entire screen
-    - `View` > `Scale Display` > `Auto resizeVM with window`
-4. Update the VM
-    - Fetch and install the latest version of the package list from Ubuntu's software repository, and any third-party repositories that may have been configured.
+      - Check Docker Permissions:
 
         ```bash
-        sudo apt update && sudo apt upgrade -y
+        docker ps
         ```
 
-    - Remove unused dependencies.
+      - Check .NET 10 (via Docker):
 
         ```bash
-        sudo apt autoremove -y
+        docker run --rm mcr.microsoft.com/dotnet/sdk:10.0-preview dotnet --version
         ```
-
-    - Update snap store.
+      - Check Git Identity:
 
         ```bash
-        # sudo killall snap-store
-        sudo snap refresh
+        git config --global -l
         ```
 
-## 3. Create Dev Base VM
-
-- Pre-install steps
-  - Clone the `tabiri_base` VM created in `Step #2`
-  - Rename the VM to `tabiri_dev_base`
-  - `View` > `Scale Display` > `Auto resizeVM with window`
-  - Download `customize_development_vm.tar.xz` from Tabiri's Google Drive to `~/Downloads/` folder
-
-- Create and run `create_tabiri_dev_base_vm.sh` script below:
-
-    ```bash
-    #!/usr/bin/env bash
-    # chmod +x ~/Downloads/create_tabiri_dev_base_vm.sh
-    # Run: sudo ~/Downloads/./create_tabiri_dev_base_vm.sh
-    set -euo pipefail
-    
-    # Enable debugging if TRACE is set
-    [[ "${TRACE-0}" == "1" ]] && set -x
-    
-    # Function to print usage
-    usage() {
-        cat <<EOF
-    Usage: ${0##*/} [OPTIONS]
-    
-    This is an awesome bash script to make your life better.
-    
-    Options:
-    -h, --help     Show this help message and exit
-    EOF
-    }
-    
-    # Check if help is requested
-    if [[ "${1-}" =~ ^-*h(elp)?$ ]]; then
-        usage
-        exit 0
-    fi
-    
-    cd "$(dirname "$0")"
-    
-    # Function to handle each installation step
-    run_command() {
-        local message="$1"
-        shift
-        echo
-        echo "$message"
-        echo
-        "$@"
-    }
-    
-    main() {
-        run_command "Updating guest VM name..." hostnamectl set-hostname dev-guest
-    
-        run_command "Removing Firefox..." snap remove --purge firefox
-    
-        run_command "Updating snap store..." snap refresh
-    
-        run_command "Updating the apt package index..." apt-get update
-    
-        run_command "Upgrading packages..." apt-get upgrade -y
-    
-        run_command "Downloading Google Chrome..." wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -P /tmp/ && \
-            apt-get install -y /tmp/google-chrome-stable_current_amd64.deb
-    
-        run_command "Downloading Slack..." wget https://downloads.slack-edge.com/releases/linux/4.37.94/prod/x64/slack-desktop-4.37.94-amd64.deb -P /tmp/ && \
-            apt-get install -y /tmp/slack-desktop-*.deb
-    
-        run_command "Installing curl..." apt-get install -y curl
-        # curl --version
-    
-        run_command "Installing AWS CLI..." \
-            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" && \
-            unzip /tmp/awscliv2.zip -d /tmp && \
-            /tmp/aws/install
-    
-        run_command "Creating folder for git projects..." sudo -u "$SUDO_USER" mkdir -p "/home/$SUDO_USER/code"
-    
-        run_command "Installing .NET 8.0 SDK..." apt-get install -y dotnet-sdk-8.0
-        # dotnet --version
-
-        run_command "Installing PostgreSQL..." \
-            sh -c "echo 'deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main' > /etc/apt/sources.list.d/pgdg.list" && \
-            wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - && \
-            apt-get update && \
-            apt-get install -y postgresql postgresql-client
-        # psql --version
-        # https://www.postgresql.org/download/linux/ubuntu/
-    
-        run_command "Installing pgAdmin..." \
-            curl https://www.pgadmin.org/static/packages_pgadmin_org.pub | apt-key add && \
-            sh -c "echo 'deb https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main' > /etc/apt/sources.list.d/pgadmin4.list" && \
-            apt-get update && \
-            apt-get install -y pgadmin4
-    
-        run_command "Installing VS Code..." \
-            apt-get install -y wget gpg && \
-            wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg && \
-            install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg && \
-            sh -c "echo 'deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main' > /etc/apt/sources.list.d/vscode.list" && \
-            rm -f packages.microsoft.gpg && \
-            apt-get install -y apt-transport-https && \
-            apt-get update && \
-            apt-get install -y code
-    
-        local extensions=(
-            ms-dotnettools.csharp
-            ms-ossdata.vscode-pgsql
-            amazonwebservices.aws-toolkit-vscode
-            ms-azuretools.vscode-docker
-            formulahendry.auto-rename-tag
-            thekalinga.bootstrap4-vscode
-            pranaygp.vscode-css-peek
-            davidanson.vscode-markdownlint
-            ritwickdey.LiveServer
-            bradlc.vscode-tailwindcss
-            GitHub.copilot
-        )
-    
-        for ext in "${extensions[@]}"; do
-            run_command "Installing VS Code extension $ext..." sudo -u "$SUDO_USER" code --install-extension "$ext"
-        done
-    
-        run_command "Installing Git..." apt-get install -y git
-        # git --version
-    
-        run_command "Installing Docker..." \
-            apt-get install -y ca-certificates curl gnupg lsb-release && \
-            mkdir -p /etc/apt/keyrings && \
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg && \
-            sh -c "echo 'deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable' > /etc/apt/sources.list.d/docker.list" && \
-            apt-get update && \
-            apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-        # docker --version
-    
-        run_command "Installing Terraform and Packer..." \
-            apt-get install -y gnupg software-properties-common && \
-            wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor | sudo tee /usr/share/keyrings/hashicorp-archive-keyring.gpg && \
-            sh -c "echo 'deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main' > /etc/apt/sources.list.d/hashicorp.list" && \
-            apt-get update && \
-            apt-get install -y terraform packer
-        # terraform --version
-        # packer --version
-    
-        run_command "Updating the apt package index..." apt-get update
-    
-        run_command "Installing the newest versions of available packages..." apt-get upgrade -y
-    
-        run_command "Removing packages that are no longer required..." apt-get autoremove -y
-    
-        run_command "Deleting installation files..." rm -r /tmp/*
-    
-        echo "The script has been executed successfully."
-        echo "Rebooting system..."
-        reboot
-    }
-    
-    main "$@"
-    ```
-
-- Post-Install Steps
-  - Install latest NodeJS LTS version (`source` doesn't work in non-interactive shell in Ubuntu)
-
-    ```bash
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.3/install.sh | bash
-    source ~/.bashrc
-    nvm install --lts
-    #node --version
-    ```
-  
-  - Unpin the following programs to the Dock:
-    - App Center
-    - Help
-
-  - Pin the following programs to the Dock:
-    - Google Chrome
-    - pgAdmin4
-    - Visual Studio Code
-    - Terminal
-    - Slack
-
-## 4. Create Base AWS Dev VM
-
-- Pre-install steps
-  - Clone the `tabiri_dev_base` VM created in `Step #3`
-  - Rename the VM to `tabiri_aws`
-  - `View` > `Scale Display` > `Auto resizeVM with window`
-
-- Create and run `create_tabiri_aws_dev_vm.sh` script below:
-
-    ```bash
-    #!/usr/bin/env bash
-
-    # Give this script execute permission before executing it by running the chmod in the script's directory
-    # chmod +x ~/Downloads/create_tabiri_aws_dev_vm.sh
-    # Run: sudo ~/Downloads/./create_tabiri_aws_dev_vm.sh
-
-    set -euo pipefail
-
-    # Enable debugging if TRACE is set
-    [[ "${TRACE-0}" == "1" ]] && set -x
-
-    # Function to print usage
-    usage() {
-        cat <<EOF
-    Usage: ${0##*/} [OPTIONS]
-
-    This is an awesome bash script to make your life better.
-
-    Options:
-    -h, --help     Show this help message and exit
-    EOF
-    }
-
-    # Check if help is requested
-    if [[ "${1-}" =~ ^-*h(elp)?$ ]]; then
-        usage
-        exit 0
-    fi
-
-    cd "$(dirname "$0")"
-
-    # Function to handle each installation step
-    run_command() {
-        local message="$1"
-        shift
-        echo
-        echo "$message"
-        echo
-        "$@"
-    }
-
-    main() {
-        run_command "Updating snap store..." snap refresh
-
-        run_command "Extracting contents of customize_development_vm.tar.xz..." \
-            tar -xf "/home/$SUDO_USER/Downloads/customize_development_vm.tar.xz" -C /tmp/ --strip-components=1
-
-        run_command "Setting up OpenVPN..." \
-            mv /tmp/setup_dev_machine/vpn_files/ca.crt /etc/openvpn/ && \
-            mv /tmp/setup_dev_machine/vpn_files/aws/* /etc/openvpn/ && \
-            chmod 700 /etc/openvpn/skadima003-aws.key && \
-            systemctl start openvpn@skadima003-aws.service
-
-        run_command "Setting up and configuring AWS access..." \
-            sudo -u "$SUDO_USER" mkdir -p /home/"$SUDO_USER"/.aws && \
-            mv /tmp/setup_dev_machine/aws/* /home/"$SUDO_USER"/.aws/
-
-        run_command "Moving the EC2 keys to ~/Tams/Keys/ ..." \
-            sudo -u "$SUDO_USER" mkdir -p /home/"$SUDO_USER"/Tams/Keys/ && \
-            sudo -u "$SUDO_USER" mv /tmp/setup_dev_machine/tams_keys/*.pem /home/"$SUDO_USER"/Tams/Keys/ && \
-            chmod 700 /home/"$SUDO_USER"/Tams/Keys/*.pem
-
-        run_command "Moving tamssettings.json file to /tamssettings.json..." \
-            mv /tmp/setup_dev_machine/tamssettings.json /
-
-        run_command "Creating Packer and Terraform environment variables..." \
-            mv /tmp/setup_dev_machine/environment /etc/environment && \
-            source /etc/environment
-
-        echo "The script has been executed successfully."
-
-        echo "Rebooting system..."
-        reboot
-    }
-
-    main "$@"
-    ```
-
-- Post-Install Steps
-    1. Test VPN connection to Tabiri's AWS infrastructure by pinging `TabiriVPN001`
-
-        ```bash
-        ping -c 3 192.168.250.12
-        ```
-
-    2. Create localhost PostgreSQL database
-        - Log into PostgreSQL: `sudo -u postgres psql`
-        - Create password for postgres user: `postgres=ALTER USER postgres PASSWORD 'PASSWORD_GOES_HERE';` Get password from `/tamssettings.json` above.
-        - Exit PostgreSQL: `postgres=\q`
-        - Restart PostgreSQL: `sudo /etc/init.d/postgresql restart`
-    3. Configure `pgAdmin`
-        - Connect to `local` database
-            - Name: `Dev`
-            - Connection: `localhost`
-            - Port: `5432`
-            - Username: `postgres`
-            - Password: `Get password from /tamssettings.json`
-
-        - Connect to `Dev` database
-            - Name: `Test`
-            - Connection: `192.168.251.88`
-            - Port: `5432`
-            - Username: `postgres`
-            - Password: `Get password from /tamssettings.json`
-
-        - Connect to `Prod` database
-            - Name: `Prod`
-            - Connection: `192.168.251.10`
-            - Port: `5432`
-            - Username: `postgres`
-            - Password: `Get password from /tamssettings.json`
-    4. Configure `AWS CodeCommit` credentials (SSH key)
-        - Generate `AWS CodeCommit` public key file:
-
-            ```bash
-            ssh-keygen -b 4096 -t rsa -f /home/tabiri/.ssh/codecommit_rsa -q -N ""
-            ```
-
-        - View and copy `AWS CodeCommit` public key file by running:
-
-            ```bash
-            cat /home/tabiri/.ssh/codecommit_rsa.pub
-            ```
-
-        - Sign in to the `AWS Management Console` and open the IAM console at <https://console.aws.amazon.com/iam/home#/users>
-        - On the `IAM console`, in the navigation pane, choose `Users`, and from the list of users, choose your `IAM user`
-        - On the user details page, choose the `Security Credentials` tab
-        - Under `SSH public keys for AWS CodeCommit` choose `Upload SSH public key`
-        - Paste the contents of your SSH public key into the field, and then choose `Upload SSH public key`
-        - Copy or save the information in `SSH Key ID` (for example, `APKAEIBAERJR2EXAMPLE`)
-        - Generating `AWS CodeCommit` config file: (Replace `APKAEIBAERJR2EXAMPLE` with the SSH Key ID from above)
-
-            ```bash
-            sudo cat << EOF >> /home/tabiri/.ssh/config
-            Host git-codecommit.*.amazonaws.com
-                User APKAEIBAERJR2EX-webAMPLE
-                IdentityFile ~/.ssh/codecommit_rsa
-            EOF
-            ```
-
-        - Run the following command to test your SSH configuration:
-
-            ```bash
-            ssh git-codecommit.us-east-1.amazonaws.com
-            ```
-
-        - To avoid "an application wants to access the private key but it is locked" error, add this command:
-
-            ```bash
-            ssh-add ~/.ssh/codecommit_rsa
-            ```
-
-        - Read full instructions [here](https://docs.aws.amazon.com/codecommit/latest/userguide/setting-up-ssh-unixes.html#setting-up-ssh-unixes-connect-console)
-
-    5. Clone `.dotfiles` repo
-        - Clone the `.dotfiles` repo
-
-            ```bash
-            git clone --bare ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/.dotfiles $HOME/.dotfiles
-            ```
-
-        - Create an alias `dotfiles` so you don't need to type it all over again
-
-            ```bash
-            alias dotfiles='/usr/bin/git --git-dir=$HOME/.dotfiles/ --work-tree=$HOME'
-            ```
-
-        - Set git status to hide untracked files
-
-            ```bash
-            dotfiles config --local status.showUntrackedFiles no
-            ```
-
-        - Remove the files that are to be replaced
-
-            ```bash
-            rm -f README.md \
-                .bashrc \
-                .gitconfig \
-                .gitmessage \
-                .config/Code/User/settings.json \
-                .aws/config
-            ```
-
-        - Checkout the actual content from the git repository to your `$HOME`
-
-            ```bash
-            dotfiles checkout
-            ```
-
-        - Set local branch to track remote branch
-
-            ```bash
-            dotfiles push --set-upstream origin master
-            ```
-
-        - Reload `.bashrc` settings
-
-            ```bash
-            source ~/.bashrc
-            ```
-
-    6. Clone `AWS CodeCommit` repos
-        - Clone `Tams.Web` repo
-
-            ```bash
-            git clone ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/Tams.Web /home/tabiri/git/Tams.Web
-            ```
-
-        - Clone `Tams.Backend` repo
-
-            ```bash
-            git clone ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/Tams.Backend /home/tabiri/git/Tams.Backend
-            ```
-
-        - Clone `Tams.Tailwind` repo
-
-            ```bash
-            git clone ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/Tams.Tailwind /home/tabiri/git/Tams.Tailwind
-            ```
-
-        - Clone `DevOps` repo
-
-            ```bash
-            git clone ssh://git-codecommit.us-east-1.amazonaws.com/v1/repos/DevOps /home/tabiri/git/DevOps
-            ```
-
-        - Read full instructions [here](https://docs.aws.amazon.com/codecommit/latest/userguide/setting-up-ssh-unixes.html#setting-up-ssh-unixes-connect-console)
-
-## 5. Create GCP Dev VM
-
-- Pre-install steps
-  - Clone the `tabiri_dev_base` VM created in `Step #3`
-  - Rename the VM to `tabiri_gcp`
-
-- Create and run `create_tabiri_gcp_dev_vm.sh` script below:
-
-    ```bash
-    #!/usr/bin/env bash
-    
-    # You can access this bash template here: https://sharats.me/posts/shell-script-best-practices/
-    # Give this script execute permission before executing it by running the chmod in the script's directory
-    # chmod +x ~/Downloads/create_tabiri_gcp_dev_vm.sh
-    # Run: sudo ~/Downloads/./create_tabiri_gcp_dev_vm.sh
-    
-    # PRE-INSTALL STEPS
-    # NONE
-    
-    set -euo pipefail
-    
-    # Enable debugging if TRACE is set
-    [[ "${TRACE-0}" == "1" ]] && set -x
-    
-    # Function to print usage
-    usage() {
-        cat <<EOF
-    Usage: ${0##*/} [OPTIONS]
-    
-    This is an awesome bash script to make your life better.
-    
-    Options:
-      -h, --help     Show this help message and exit
-    EOF
-    }
-    
-    # Check if help is requested
-    if [[ "${1-}" =~ ^-*h(elp)?$ ]]; then
-        usage
-        exit 0
-    fi
-    
-    cd "$(dirname "$0")"
-    
-    # Function to handle each installation step
-    run_command() {
-        local message="$1"
-        shift
-        echo
-        echo "$message"
-        echo
-        "$@"
-    }
-    
-    main() {
-        run_command "Updating snap store..." snap refresh
-    
-        run_command "Extracting contents of customize_development_vm.tar.xz..." \
-            tar -xf "/home/$SUDO_USER/Downloads/customize_development_vm.tar.xz" -C /tmp/ --strip-components=1
-    
-        run_command "Setting up OpenVPN..." \
-            mv /tmp/setup_dev_machine/vpn_files/ca.crt /etc/openvpn/ && \
-            mv /tmp/setup_dev_machine/vpn_files/gcp/* /etc/openvpn/ && \
-            chmod 700 /etc/openvpn/skadima002-gcp.key && \
-            systemctl start openvpn@skadima002-gcp.service
-    
-        # Test VPN connection to Tabiri's GCP infrastructure by pinging tabirivpn002
-        # ping -c 3 192.168.250.101
-    
-        echo
-        echo "The script has been executed successfully."
-    }
-    
-    main "$@"
-    ```
-
-- Post-Install Steps
-  1. `View` > `Scale Display` > `Auto resizeVM with window`
-  2. Test VPN connection to Tabiri's GCP infrastructure by pinging `tabirivpn002`
-
-        ```bash
-        ping -c 3 192.168.250.101
-        ```
+2. Create the `openclaw-vm` virtual machine
 
+    - Create `openclaw-user-data.yaml` file at `~/Downloads/`
+
+      ```bash
+      cat << EOF >> $HOME/Downloads/openclaw-user-data.yaml
+      #cloud-config
+      users:
+        - name: devuser
+          groups: [sudo]
+          shell: /bin/bash
+          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant devuser passwordless sudo access:
+          lock_passwd: true # 🔒 Locks password authentication entirely
+          ssh_authorized_keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host #
+
+      packages:
+        - docker.io
+        - docker-buildx
+        - nodejs
+        - npm
+        - git
+        - curl
+        - jq
+        - tcpdump
+        - auditd
+        - byobu
+
+      runcmd:
+        # 1. Safely attach devuser to docker now that the package is installed
+        - [ usermod, -aG, docker, devuser ]
+        
+        # 2. System-wide global installation of the OpenClaw CLI
+        - [ npm, install, -g, openclaw@latest ]
+        
+        # 3. Provision the workspace securely using devuser's explicit context
+        - [ sudo, -u, devuser, mkdir, -p, /home/devuser/claw-workspace ]
+
+        # 4. Enable Byobu auto-launch on login for devuser
+        - [ sudo, -u, devuser, byobu-enable ]
+      EOF
+      ```
+
+    - Create the `openclaw-vm` virtual machine
+
+      Run the following command to create `openclaw-vm`
+
+      ```bash
+      sudo ./deploy-vm.sh openclaw-vm -m 4096 -c 4 -s 40 -f
+      ```
+
+    - SSH into `openclaw-vm`
+
+      ```bash
+      ssh openclaw-vm
+      ```
+
+    - Verify installation
+      - Run `openclaw gateway start`
+      - Open an SSH tunnel from your host: `ssh -L 18789:localhost:18789 devuser@openclaw-ip`
+      - Access the UI at `http://localhost:18789`
+      - Before running a risky AI experiment, freeze the target image: `virsh snapshot-create-as openclaw-vm pre-experiment`
+
+## Phase 4: Managing Host and Virtual Machines
+
+## 1. Updating Host's Firmware
+
+Update host's firmware once a month.
+
+```bash
+fwupdmgr update
+```
+
+## 2. Listing VMs
+
+To see what is running or what has been created on your host, use the `list` command.
+
+### a. List only ACTIVE (running) VMs:
+
+```bash
+virsh list
+```
+
+### b. List ALL VMs (running, paused, or stopped):
+
+```bash
+virsh list --all
+```
+
+## 3. Starting a VM
+
+To power on a virtual machine that is currently shut down:
+
+```bash
+virsh start <vm-name>
+# Example: virsh start dotnet-vm
+```
+
+## 4. Stopping a VM
+
+There are two ways to turn off a VM, depending on whether you want a polite request or an instant pull of the virtual power cord.
+
+### a. Graceful Shutdown (Polite Request):
+
+This sends an ACPI shutdown signal to the guest OS, letting Ubuntu close its processes cleanly.
+
+```bash
+virsh shutdown <vm-name>
+# Example: virsh shutdown openclaw-vm
+```
+### b. Forceful Stop (The Virtual Power Cord):
+
+If a VM is frozen or if you are about to run your destroy script, this instantly kills the power to the virtual instance.
+
+```bash
+virsh destroy <vm-name>
+# Example: virsh destroy dotnet-vm
+```
+
+## 5. Creating a Snapshot of a VM
+
+```bash
+virsh snapshot-create-as <vm-name> pre-experiment
+# Example: virsh snapshot-create-as openclaw-vm pre-experiment
+```
+
+## 6. Checking IP Addresses
+
+You can grab a running VM's network information without using the full console anytime by running
+
+```bash
+virsh domifaddr <vm-name>
+# Example: virsh domifaddr openclaw-vm
+```
