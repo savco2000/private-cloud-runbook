@@ -48,7 +48,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
         timezone: America/New_York
         identity:
           hostname: ubuntu-host
-          realname: "Primary Developer"
+          realname: "Savannah O. Kadima"
           username: devuser
           # NOTE: You MUST replace this with a real hashed password.
           # Generate one in your terminal using: mkpasswd -m sha-512
@@ -82,6 +82,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
           - jq
           - whois
           - usb-creator-gtk
+          - paperkey
         snaps:
           - name: code
             classic: true
@@ -91,7 +92,6 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
         late-commands:
           - curtin in-target -- wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
           - curtin in-target -- apt-get install -y /tmp/chrome.deb
-          - curtin in-target -- ubuntu-report send yes
         user-data:
           runcmd:
             # 1. Remove Firefox now that the system is live
@@ -135,7 +135,8 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
               mkdir -p /home/devuser/.ssh/conf.d
               touch /home/devuser/.ssh/config
               if ! grep -q "^Include conf.d/\*" /home/devuser/.ssh/config; then
-                echo -e "Include conf.d/*\n$(cat /home/devuser/.ssh/config)" > /home/devuser/.ssh/config
+                # Using printf cleanly prepends the line without shell flavor collisions
+                printf "Include conf.d/*\n%s" "$(cat /home/devuser/.ssh/config)" > /home/devuser/.ssh/config
               fi
               chown -R devuser:devuser /home/devuser/.ssh
               chmod 700 /home/devuser/.ssh
@@ -146,8 +147,8 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
             - sudo -u devuser code --install-extension ms-vscode-remote.remote-containers
 
             # 6. Configure Git for devuser context
-            - [ sudo, -u, devuser, git, config, --global, user.name, "Your Name" ]
-            - [ sudo, -u, devuser, git, config, --global, user.email, "your@email.com" ]
+            - [ sudo, -u, devuser, git, config, --global, user.name, "Savannah O. Kadima" ]
+            - [ sudo, -u, devuser, git, config, --global, user.email, "savco2000@gmail.com" ]
             - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
 
             # 7. PERFORMANCE OPTIMIZATIONS (Systemd Services)
