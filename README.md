@@ -624,15 +624,25 @@ Once you log in to your fresh host, establish your sovereignty.
     - Create `openclaw-user-data.yaml` file at `~/Downloads/`
 
       ```bash
+      #!/bin/bash
+      # Enable strict error handling: fail fast on errors or unset variables
+      set -euo pipefail
+
+      # Dynamically set the output path to the exact directory where this script resides
+      OUTPUT_FILE="$(dirname "$0")/openclaw-user-data.yaml"
+
       # 1. Dynamically pull identity and SSH keys from the password manager
-      GIT_NAME=$(pass show github/personal | grep "^username:" | cut -d' ' -f2-)
-      GIT_EMAIL=$(pass show github/personal | grep "^email:" | cut -d' ' -f2)
+      # Fetch git secrets once to halve the GPG decryption overhead
+      GIT_SECRETS=$(pass show github/personal)
+      GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+      GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
+
       SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
       USERNAME=$(pass show virtual-machine | grep "^username:" | cut -d' ' -f2-)
 
       # 2. Generate the configuration file with variables injected
-      # (Using > instead of >> to ensure we overwrite cleanly on rebuilds)
-      cat << EOF > $HOME/Downloads/openclaw-user-data.yaml
+      # (Unquoted EOF allows Bash to inject variables directly without needing sed)
+      cat << EOF > "$OUTPUT_FILE"
       #cloud-config
       users:
         - name: $USERNAME
@@ -673,6 +683,8 @@ Once you log in to your fresh host, establish your sovereignty.
         # 5. Enable Byobu auto-launch on login for $USERNAME
         - [ sudo, -u, $USERNAME, byobu-enable ]
       EOF
+
+      echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
       ```
 
     - Create the `openclaw-vm` virtual machine
