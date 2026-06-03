@@ -27,19 +27,41 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
     - Create a directory named `Lifeboat` under `~/Downloads/Lifeboat/`.
 
       ```bash
-      mkdir $HOME/Downloads/Lifeboat
+      mkdir -p $HOME/Lifeboat/host
       ```
 
-    - Create a file named `meta-data` at `~/Downloads/Lifeboat/` and leave it empty.
+    - Create a file named `meta-data` at `~/Lifeboat/` and leave it empty.
 
       ```bash
-      touch $HOME/Downloads/Lifeboat/meta-data
+      touch $HOME/Lifeboat/host/meta-data
       ```
 
-    - Create a file named `user-data` at `~/Downloads/Lifeboat`.
+    - Create a file named `user-data` at `~/Downloads/Lifeboat/host`.
 
       ```bash
-      cat << 'OUTER_EOF' >> $HOME/Downloads/Lifeboat/user-data
+      #!/bin/bash
+      # Enable strict error handling: fail fast on errors or unset variables
+      set -euo pipefail
+
+      # Define a single source of truth for the output path
+      OUTPUT_FILE="$HOME/Lifeboat/host/user-data"
+      mkdir -p "$(dirname "$OUTPUT_FILE")"
+
+      # 1. Dynamically pull identity and SSH keys
+      # Fetch the host secrets exactly once to save GPG decryption overhead
+      HOST_SECRETS=$(pass show host)
+      GIT_SECRETS=$(pass show github/personal)
+
+      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+      HASHED_PASSWORD=$(echo "$HOST_SECRETS" | grep "^hashed-password:" | cut -d' ' -f2)
+      REAL_NAME=$(echo "$HOST_SECRETS" | grep "^realname:" | cut -d' ' -f2-)
+      HOST_NAME=$(echo "$HOST_SECRETS" | grep "^hostname:" | cut -d' ' -f2-)
+      USERNAME=$(echo "$HOST_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+      GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+      GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
+
+      # 2. Generate the configuration file with safe placeholders
+      cat << 'OUTER_EOF' > "$OUTPUT_FILE"
       #cloud-config
       autoinstall:
         version: 1
@@ -47,18 +69,14 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
         keyboard: {layout: us}
         timezone: America/New_York
         identity:
-          hostname: ubuntu-host
-          realname: "Savannah O. Kadima"
-          username: devuser
-          # NOTE: You MUST replace this with a real hashed password.
-          # Generate one in your terminal using: mkpasswd -m sha-512
-          password: "$6$EXAMPLERANDOM$HashedPassword..."
+          hostname: __HOST_NAME_PLACEHOLDER__
+          realname: __REAL_NAME_PLACEHOLDER__
+          username: __USERNAME_PLACEHOLDER__
+          password: __HASHED_PASSWORD_PLACEHOLDER__
         ssh:
           install-server: true
-          # NOTE: You MUST replace this with the contents of your id_ed25519.pub
-          # Generate one in your terminal using: ssh-keygen -t ed25519 -C "devuser@ubuntu-host"
           authorized-keys:
-            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA...your_key... 
+            - __SSH_PUB_KEY_PLACEHOLDER__ 
         storage:
           layout:
             name: direct
@@ -123,36 +141,34 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
             # 3. DISABLE GNOME INITIAL SETUP (The "Welcome" Screen & Popup Fix)
             - |
               sed -i '/\[daemon\]/a InitialSetupEnable=false' /etc/gdm3/custom.conf
-              for dir in /etc/skel /home/devuser; do
+              for dir in /etc/skel /home/__USERNAME_PLACEHOLDER__; do
                 mkdir -p "$dir/.config"
                 echo "yes" > "$dir/.config/gnome-initial-setup-done"
               done
-              chown -R devuser:devuser /home/devuser/.config 2>/dev/null || true
+              chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.config 2>/dev/null || true
               apt-get purge -y gnome-initial-setup
 
-            # 4. Modular SSH Configuration Setup for devuser
+            # 4. Modular SSH Configuration Setup for __USERNAME_PLACEHOLDER__
             - |
-              mkdir -p /home/devuser/.ssh/conf.d
-              touch /home/devuser/.ssh/config
-              if ! grep -q "^Include conf.d/\*" /home/devuser/.ssh/config; then
-                # Using printf cleanly prepends the line without shell flavor collisions
-                printf "Include conf.d/*\n%s" "$(cat /home/devuser/.ssh/config)" > /home/devuser/.ssh/config
+              mkdir -p /home/__USERNAME_PLACEHOLDER__/.ssh/conf.d
+              touch /home/__USERNAME_PLACEHOLDER__/.ssh/config
+              if ! grep -q "^Include conf.d/\*" /home/__USERNAME_PLACEHOLDER__/.ssh/config; then
+                printf "Include conf.d/*\n%s" "$(cat /home/__USERNAME_PLACEHOLDER__/.ssh/config)" > /home/__USERNAME_PLACEHOLDER__/.ssh/config
               fi
-              chown -R devuser:devuser /home/devuser/.ssh
-              chmod 700 /home/devuser/.ssh
-              chmod 600 /home/devuser/.ssh/config
+              chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.ssh
+              chmod 700 /home/__USERNAME_PLACEHOLDER__/.ssh
+              chmod 600 /home/__USERNAME_PLACEHOLDER__/.ssh/config
 
             # 5. Install VS Code Extensions
-            - sudo -u devuser code --install-extension ms-vscode-remote.remote-ssh
-            - sudo -u devuser code --install-extension ms-vscode-remote.remote-containers
+            - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-ssh
+            - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-containers
 
-            # 6. Configure Git for devuser context
-            - [ sudo, -u, devuser, git, config, --global, user.name, "Savannah O. Kadima" ]
-            - [ sudo, -u, devuser, git, config, --global, user.email, "savco2000@gmail.com" ]
-            - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
+            # 6. Configure Git for __USERNAME_PLACEHOLDER__ context
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.name, "__GIT_NAME_PLACEHOLDER__" ]
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.email, "__GIT_EMAIL_PLACEHOLDER__" ]
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, init.defaultBranch, main ]
 
             # 7. PERFORMANCE OPTIMIZATIONS (Systemd Services)
-            # Turn off non-essential blocking network checks and debugging overhead
             - |
               systemctl disable NetworkManager-wait-online.service
               systemctl disable fwupd-refresh.service
@@ -163,17 +179,28 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
               systemctl enable fstrim.timer
 
             # 8. SNAP REVISION MANAGEMENT
-            # Mitigate virtual loop device inflation by enforcing strict storage retention limits
             - snap set system refresh.retain=2
 
             # 9. KERNEL SERIAL PROBE DISABLING
-            # Patch the GRUB default configuration to bypass legacy UART infrastructure scans
             - |
               if [ -f /etc/default/grub ]; then
                 sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash 8250.nr_uarts=0"/' /etc/default/grub
                 update-grub
               fi
       OUTER_EOF
+
+      # 3. Safely inject all parameters in a single disk I/O operation
+      sed -i \
+        -e "s|__SSH_PUB_KEY_PLACEHOLDER__|$SSH_PUB_KEY|g" \
+        -e "s|__HASHED_PASSWORD_PLACEHOLDER__|$HASHED_PASSWORD|g" \
+        -e "s|__REAL_NAME_PLACEHOLDER__|$REAL_NAME|g" \
+        -e "s|__HOST_NAME_PLACEHOLDER__|$HOST_NAME|g" \
+        -e "s|__USERNAME_PLACEHOLDER__|$USERNAME|g" \
+        -e "s|__GIT_NAME_PLACEHOLDER__|$GIT_NAME|g" \
+        -e "s|__GIT_EMAIL_PLACEHOLDER__|$GIT_EMAIL|g" \
+        "$OUTPUT_FILE"
+
+      echo "✨ user-data file successfully generated at $OUTPUT_FILE"
       ```
 
 4. **Generate random salted hashed password**
