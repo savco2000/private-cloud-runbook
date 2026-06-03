@@ -505,17 +505,18 @@ Once you log in to your fresh host, establish your sovereignty.
       # 1. Dynamically pull identity and SSH keys from the password manager
       GIT_NAME=$(pass show github/personal | grep "^username:" | cut -d' ' -f2-)
       GIT_EMAIL=$(pass show github/personal | grep "^email:" | cut -d' ' -f2)
-      SSH_PUB_KEY=$(pass show ssh | grep "^public_key:" | cut -d' ' -f2-)
+      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+      USERNAME=$(pass show virtual-machine | grep "^username:" | cut -d' ' -f2-)
 
       # 2. Generate the configuration file with variables injected
       # (Using > instead of >> to ensure we overwrite cleanly on rebuilds)
       cat << EOF > $HOME/Downloads/dotnet-user-data.yaml
       #cloud-config
       users:
-        - name: devuser
+        - name: $USERNAME
           groups: [sudo]
           shell: /bin/bash
-          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant devuser passwordless sudo
+          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo
           lock_passwd: true # 🔒 Locks password authentication entirely
           ssh_authorized_keys:
             - $SSH_PUB_KEY
@@ -533,15 +534,15 @@ Once you log in to your fresh host, establish your sovereignty.
 
       runcmd:
         # 1. Adding the user to the docker group safely after package installation
-        - usermod -aG docker devuser
+        - usermod -aG docker $USERNAME
         
-        # 2. Configuring Git identity for devuser
-        - [ sudo, -u, devuser, git, config, --global, user.name, "$GIT_NAME" ]
-        - [ sudo, -u, devuser, git, config, --global, user.email, "$GIT_EMAIL" ]
-        - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
+        # 2. Configuring Git identity for $USERNAME
+        - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
+        - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
+        - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
 
-        # 3. Enable Byobu auto-launch on login for devuser
-        - [ sudo, -u, devuser, byobu-enable ]
+        # 3. Enable Byobu auto-launch on login for $USERNAME
+        - [ sudo, -u, $USERNAME, byobu-enable ]
       EOF
       ```
 
@@ -586,17 +587,18 @@ Once you log in to your fresh host, establish your sovereignty.
       # 1. Dynamically pull identity and SSH keys from the password manager
       GIT_NAME=$(pass show github/personal | grep "^username:" | cut -d' ' -f2-)
       GIT_EMAIL=$(pass show github/personal | grep "^email:" | cut -d' ' -f2)
-      SSH_PUB_KEY=$(pass show ssh | grep "^public_key:" | cut -d' ' -f2-)
+      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+      USERNAME=$(pass show virtual-machine | grep "^username:" | cut -d' ' -f2-)
 
       # 2. Generate the configuration file with variables injected
       # (Using > instead of >> to ensure we overwrite cleanly on rebuilds)
       cat << EOF > $HOME/Downloads/openclaw-user-data.yaml
       #cloud-config
       users:
-        - name: devuser
+        - name: $USERNAME
           groups: [sudo]
           shell: /bin/bash
-          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant devuser passwordless sudo access:
+          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo access:
           lock_passwd: true # 🔒 Locks password authentication entirely
           ssh_authorized_keys:
             - $SSH_PUB_KEY
@@ -614,22 +616,22 @@ Once you log in to your fresh host, establish your sovereignty.
         - byobu
 
       runcmd:
-        # 1. Safely attach devuser to docker now that the package is installed
-        - [ usermod, -aG, docker, devuser ]
+        # 1. Safely attach $USERNAME to docker now that the package is installed
+        - [ usermod, -aG, docker, $USERNAME ]
         
         # 2. System-wide global installation of the OpenClaw CLI
         - [ npm, install, -g, openclaw@latest ]
         
-        # 3. Provision the workspace securely using devuser's explicit context
-        - [ sudo, -u, devuser, mkdir, -p, /home/devuser/claw-workspace ]
+        # 3. Provision the workspace securely using $USERNAME's explicit context
+        - [ sudo, -u, $USERNAME, mkdir, -p, /home/$USERNAME/claw-workspace ]
 
-        # 4. Configuring Git identity for devuser
-        - [ sudo, -u, devuser, git, config, --global, user.name, "$GIT_NAME" ]
-        - [ sudo, -u, devuser, git, config, --global, user.email, "$GIT_EMAIL" ]
-        - [ sudo, -u, devuser, git, config, --global, init.defaultBranch, main ]
+        # 4. Configuring Git identity for $USERNAME
+        - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
+        - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
+        - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
 
-        # 5. Enable Byobu auto-launch on login for devuser
-        - [ sudo, -u, devuser, byobu-enable ]
+        # 5. Enable Byobu auto-launch on login for $USERNAME
+        - [ sudo, -u, $USERNAME, byobu-enable ]
       EOF
       ```
 
