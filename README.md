@@ -40,183 +40,481 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
       ```bash
       #!/bin/bash
-      # Make executable: chmod +x deploy-vm.sh
-      # Usage: sudo ./deploy-vm.sh <config.yaml | vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
-      # Default: 4096 MiB RAM, 4 vCPUs, 40 GiB Disk (Linked Clone)
+      # Enable strict error handling: fail fast on errors or unset variables
+      set -euo pipefail
 
-      # --- 1. Dynamic Variables & Defaults ---
-      TARGET=$1
-      if [ -z "$TARGET" ]; then
-          echo "❌ Error: No target specified."
-          echo "Usage: $0 <user-data.yaml | vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
-          exit 1
-      fi
+      # Define a single source of truth for the output path
+      OUTPUT_FILE="$HOME/Lifeboat/host/user-data"
+      mkdir -p "$(dirname "$OUTPUT_FILE")"
 
-      # Smart Input Parsing: Determine if target is a file or a VM name
-      if [[ "$TARGET" =~ \.(yaml|yml)$ ]]; then
-          # Input is a file path
-          USER_DATA="$TARGET"
-          FILENAME=$(basename "$TARGET")
-          PREFIX=$(echo "$FILENAME" | sed -E 's/-user-data\.(yaml|yml)$//')
-          VM_NAME="${PREFIX}-vm"
-      else
-          # Input is a string (VM name or prefix)
-          if [[ "$TARGET" == *-vm ]]; then
-              VM_NAME="$TARGET"
-              PREFIX="${TARGET%-vm}"
-          else
-              PREFIX="$TARGET"
-              VM_NAME="${PREFIX}-vm"
-          fi
-          # Guess the local user-data path in case they are creating rather than destroying
-          USER_DATA="./${PREFIX}-user-data.yaml"
-      fi
+      # 1. Dynamically pull identity and SSH keys
+      # Fetch the host secrets exactly once to save GPG decryption overhead
+      HOST_SECRETS=$(pass show host)
+      GIT_SECRETS=$(pass show github/personal)
 
-      MEM=4096
-      CPUS=4
-      DISK=40
+      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+      HASHED_PASSWORD=$(echo "$HOST_SECRETS" | grep "^hashed-password:" | cut -d' ' -f2)
+      REAL_NAME=$(echo "$HOST_SECRETS" | grep "^realname:" | cut -d' ' -f2-)
+      HOST_NAME=$(echo "$HOST_SECRETS" | grep "^hostname:" | cut -d' ' -f2-)
+      USERNAME=$(echo "$HOST_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+      GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+      GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
 
-      shift
+      # 2. Generate the configuration file with safe placeholders
+      cat << 'OUTER_EOF' > "$OUTPUT_FILE"
+      #cloud-config
+      autoinstall:
+        version: 1
+        locale: en_US.UTF-8
+        keyboard: {layout: us}
+        timezone: America/New_York
+        identity:
+          hostname: __HOST_NAME_PLACEHOLDER__
+          realname: __REAL_NAME_PLACEHOLDER__
+          username: __USERNAME_PLACEHOLDER__
+          password: __HASHED_PASSWORD_PLACEHOLDER__
+        ssh:
+          install-server: true
+          authorized-keys:
+            - __SSH_PUB_KEY_PLACEHOLDER__ 
+        storage:
+          layout:
+            name: direct
+            match:
+              path: /dev/nvme0n1
+        packages:
+          - qemu-system-x86
+          - qemu-utils
+          - cloud-image-utils
+          - libvirt-daemon-system
+          - libvirt-clients
+          - virt-manager
+          - gimp
+          - tlp
+          - gnupg2
+          - pass
+          - stow
+          - pinentry-gnome3
+          - xclip
+          - curl
+          - jq
+          - whois
+          - usb-creator-gtk
+          - paperkey
+        snaps:
+          - name: code
+            classic: true
+          - name: slack
+            classic: true
+          - name: zoom-client
+        late-commands:
+          - curtin in-target -- wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
+          - curtin in-target -- apt-get install -y /tmp/chrome.deb
+        user-data:
+          runcmd:
+            # 1. Remove Firefox now that the system is live
+            - snap remove --purge firefox
 
-      # --- 2. Flag Handling ---
-      while getopts "dfm:c:s:" opt; do
-        case $opt in
-          d)
-            echo "🔥 Self-Destruct Initiated for $VM_NAME..."
-            sudo virsh destroy "$VM_NAME" 2>/dev/null
-            sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
-            sudo rm -f "/var/lib/libvirt/images/$VM_NAME-meta-data" "/var/lib/libvirt/images/$VM_NAME-seed.iso"
-            echo "✨ Environment cleared."
-            exit 0
-            ;;
-          f)
-            echo "♻️ Force flag detected. Removing local base image..."
-            sudo rm -f "/var/lib/libvirt/images/resolute-base.img"
-            ;;
-          m) MEM=$OPTARG ;;
-          c) CPUS=$OPTARG ;;
-          s) DISK=$OPTARG ;;
-          \?) exit 1 ;;
-        esac
-      done
+            # 2. SET SYSTEM-WIDE DESKTOP DEFAULTS VIA DCONF
+            - |
+              mkdir -p /etc/dconf/db/local.d/
+              cat <<EOF > /etc/dconf/db/local.d/00-sovereign-desktop
+              [org/gnome/shell]
+              favorite-apps=['google-chrome.desktop', 'code_code.desktop', 'org.gnome.Ptyxis.desktop', 'slack_slack.desktop', 'zoom-client_zoom-client.desktop', 'virt-manager.desktop', 'org.gnome.Nautilus.desktop']
 
-      # --- 3. Internal Paths ---
-      LIBVIRT_DIR="/var/lib/libvirt/images"
-      BASE_IMG="$LIBVIRT_DIR/resolute-base.img"
-      VM_DISK="$LIBVIRT_DIR/$VM_NAME.qcow2"
-      META_DATA="$LIBVIRT_DIR/$VM_NAME-meta-data"
-      SEED_ISO="$LIBVIRT_DIR/$VM_NAME-seed.iso"
-      BASE_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
-      SHA_URL="https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS"
+              [org/gnome/shell/extensions/dash-to-dock]
+              show-trash=true
+              trash-at-the-end=true
 
-      # --- 4. Pre-Flight Checks ---
-      if [ ! -f "$USER_DATA" ]; then
-          echo "❌ Error: Configuration file '$USER_DATA' not found."
-          exit 1
-      fi
+              [org/gnome/desktop/interface]
+              color-scheme='prefer-dark'
+              EOF
+              
+              mkdir -p /etc/dconf/profile/
+              cat <<EOF > /etc/dconf/profile/user
+              user-db:user
+              system-db:local
+              EOF
+              
+              dconf update
 
-      if [ "$EUID" -ne 0 ]; then 
-        echo "Please run as root (sudo) for deployment"
-        exit
-      fi
+            # 3. DISABLE GNOME INITIAL SETUP (The "Welcome" Screen & Popup Fix)
+            - |
+              sed -i '/\[daemon\]/a InitialSetupEnable=false' /etc/gdm3/custom.conf
+              for dir in /etc/skel /home/__USERNAME_PLACEHOLDER__; do
+                mkdir -p "$dir/.config"
+                echo "yes" > "$dir/.config/gnome-initial-setup-done"
+              done
+              chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.config 2>/dev/null || true
+              apt-get purge -y gnome-initial-setup
 
-      # Detect the real user who invoked sudo and discover their real home directory
-      REAL_USER=${SUDO_USER:-$USER}
-      REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+            # 4. Modular SSH Configuration Setup for __USERNAME_PLACEHOLDER__
+            - |
+              mkdir -p /home/__USERNAME_PLACEHOLDER__/.ssh/conf.d
+              touch /home/__USERNAME_PLACEHOLDER__/.ssh/config
+              if ! grep -q "^Include conf.d/\*" /home/__USERNAME_PLACEHOLDER__/.ssh/config; then
+                printf "Include conf.d/*\n%s" "$(cat /home/__USERNAME_PLACEHOLDER__/.ssh/config)" > /home/__USERNAME_PLACEHOLDER__/.ssh/config
+              fi
+              chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.ssh
+              chmod 700 /home/__USERNAME_PLACEHOLDER__/.ssh
+              chmod 600 /home/__USERNAME_PLACEHOLDER__/.ssh/config
 
-      # --- 5. Synchronize & Verify Base Image ---
-      if [ ! -f "$BASE_IMG" ]; then
-          echo "📡 Downloading Ubuntu Cloud Image..."
-          wget -c --no-verbose -P "$LIBVIRT_DIR" "$BASE_IMG_URL"
-          mv "$LIBVIRT_DIR/resolute-server-cloudimg-amd64v3.img" "$BASE_IMG" 2>/dev/null
-      fi
+            # 5. Install VS Code Extensions
+            - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-ssh
+            - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-containers
 
-      echo "🛡️ Verifying integrity..."
-      curl -s "$SHA_URL" | grep "resolute-server-cloudimg-amd64v3.img" > /tmp/sha256
-      sed -i "s/resolute-server-cloudimg-amd64v3.img/resolute-base.img/" /tmp/sha256
-      (cd "$LIBVIRT_DIR" && sha256sum --check --status /tmp/sha256) || { echo "❌ Checksum failed!"; exit 1; }
+            # 6. Configure Git for __USERNAME_PLACEHOLDER__ context
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.name, "__GIT_NAME_PLACEHOLDER__" ]
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.email, "__GIT_EMAIL_PLACEHOLDER__" ]
+            - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, init.defaultBranch, main ]
 
-      # --- 6. Provision & Seed ---
-      echo "🧹 Cleaning up existing $VM_NAME resources..."
-      sudo virsh destroy "$VM_NAME" 2>/dev/null
-      sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
+            # 7. PERFORMANCE OPTIMIZATIONS (Systemd Services)
+            - |
+              systemctl disable NetworkManager-wait-online.service
+              systemctl disable fwupd-refresh.service
+              systemctl disable kdump-tools.service
+              systemctl disable apport.service
+              systemctl disable ModemManager.service
+              systemctl disable fstrim.service
+              systemctl enable fstrim.timer
 
-      echo "🌱 Generating Cloud-Init seed..."
-      cat <<EOF > "$META_DATA"
-      instance-id: $VM_NAME-$(date +%s)
-      local-hostname: $VM_NAME
-      EOF
-      cloud-localds "$SEED_ISO" "$USER_DATA" "$META_DATA"
+            # 8. SNAP REVISION MANAGEMENT
+            - snap set system refresh.retain=2
 
-      echo "💾 Creating linked clone: $VM_DISK (${DISK}GB)..."
-      sudo qemu-img create -f qcow2 -b "$BASE_IMG" -F qcow2 "$VM_DISK" "${DISK}G"
+            # 9. KERNEL SERIAL PROBE DISABLING
+            - |
+              if [ -f /etc/default/grub ]; then
+                sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash 8250.nr_uarts=0"/' /etc/default/grub
+                update-grub
+              fi
+      OUTER_EOF
 
-      # --- 7. Launch ---
-      echo "🚀 Launching $VM_NAME ($MEM MiB RAM, $CPUS vCPUs)..."
-      virt-install \
-        --name "$VM_NAME" \
-        --osinfo ubuntu-lts-latest \
-        --cpu host-model \
-        --memory "$MEM" \
-        --vcpus "$CPUS" \
-        --import \
-        --disk path="$VM_DISK" \
-        --disk path="$SEED_ISO",device=cdrom \
-        --network network=default \
-        --graphics none \
-        --noautoconsole
+      # 3. Safely inject all parameters in a single disk I/O operation
+      sed -i \
+        -e "s|__SSH_PUB_KEY_PLACEHOLDER__|$SSH_PUB_KEY|g" \
+        -e "s|__HASHED_PASSWORD_PLACEHOLDER__|$HASHED_PASSWORD|g" \
+        -e "s|__REAL_NAME_PLACEHOLDER__|$REAL_NAME|g" \
+        -e "s|__HOST_NAME_PLACEHOLDER__|$HOST_NAME|g" \
+        -e "s|__USERNAME_PLACEHOLDER__|$USERNAME|g" \
+        -e "s|__GIT_NAME_PLACEHOLDER__|$GIT_NAME|g" \
+        -e "s|__GIT_EMAIL_PLACEHOLDER__|$GIT_EMAIL|g" \
+        "$OUTPUT_FILE"
 
-      # --- 8. Post-Flight: Monitor the Black Box ---
-      echo "⏳ Waiting for VM to claim an IP..."
-      MAX_RETRIES=30
-      COUNT=0
-      while [ -z "${VM_IP:-}" ] && [ $COUNT -lt $MAX_RETRIES ]; do
-          VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" || true)
-          sleep 2
-          ((COUNT++))
-      done
-
-      if [ -z "${VM_IP:-}" ]; then
-          echo "⚠️ IP detection timed out. Check manually with 'virsh domifaddr $VM_NAME'."
-          exit 1
-      fi
-
-      echo "🚀 $VM_NAME is live at $VM_IP. Waiting for configuration to finish..."
-
-      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-          -o ConnectTimeout=5 devuser@$VM_IP "cloud-init status --wait"
-
-      # --- 9. Automated SSH Configuration ---
-      echo "⚙️  Wiring up SSH configuration for $VM_NAME..."
-
-      # Ensure the modular directory exists in the true invoking user's home folder
-      mkdir -p "$REAL_HOME/.ssh/conf.d"
-
-      # Create or overwrite the VM's specific config file path dynamically
-      cat << EOF > "$REAL_HOME/.ssh/conf.d/$VM_NAME"
-      Host $VM_NAME
-        HostName $VM_IP
-        User devuser
-        IdentityFile ~/.ssh/id_ed25519
-        ForwardAgent yes
-        IdentitiesOnly yes
-        StrictHostKeyChecking no
-        UserKnownHostsFile /dev/null
-      EOF
-
-      # Ensure permissions and system ownership are handed back to the normal user context
-      chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.ssh/conf.d"
-      chmod 700 "$REAL_HOME/.ssh/conf.d"
-      chmod 600 "$REAL_HOME/.ssh/conf.d/$VM_NAME"
-
-      echo "------------------------------------------------"
-      echo "✅ $VM_NAME is FULLY PROVISIONED and ready!"
-      echo "------------------------------------------------"
-      echo "Please wait a couple of minutes before connecting by typing:"
-      echo "ssh $VM_NAME"
-      echo "as the installation may still be completing."
-      echo "------------------------------------------------"
+      echo "✨ user-data file successfully generated at $OUTPUT_FILE"
       ```
+
+4. **Generate random salted hashed password**
+
+    - Run the following command to generate a random salted hashed password.
+
+      ```bash
+      mkpasswd -m sha-512 | tee $HOME/Downloads/Lifeboat/hashed_password.txt
+      ```
+
+    - It will output a single line that looks something like this:
+
+      `$6$EXAMPLERANDOM$HashedPassword...`
+
+    - Update your **user-data**
+
+      Copy that entire line and paste it into your host's `user-data` file under the `identity` section:
+
+      ```yaml
+      identity:
+        hostname: ubuntu-host
+        realname: "Primary Developer"
+        username: devuser
+        password: "$6$EXAMPLERANDOM$HashedPassword..."
+      ```
+
+5. **Generate the SSH key**
+
+    - Run this command on the machine you will be using to access your host (e.g., your current laptop):
+
+      ```bash
+      ssh-keygen -t ed25519 -C "devuser@ubuntu-host"
+      ```
+
+    - Follow the Prompts
+      - **Enter file in which to save the key:** Press Enter to accept the default location (`~/.ssh/id_ed25519`).
+      - **Enter passphrase:** It is highly recommended to enter a passphrase. This adds a second layer of security.
+
+    - Identify Your Keys
+      
+      The command creates two files in your `~/.ssh/` directory:
+      - `id_ed25519` **(Private Key):** This stays on your laptop. Never share it.
+      - `id_ed25519.pub` **(Public Key):** This is the one we inject.
+
+    - Extract the Public Key for your **user-data**
+
+      To get the string you need for your autoinstall file, run:
+
+      ```bash
+      cat ~/.ssh/id_ed25519.pub
+      ```
+
+      It will output a single line that looks something like this:
+
+      `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host`
+
+      - Update your **user-data**
+
+        Copy that entire line and paste it into your host's `user-data` file under the `ssh` section:
+
+        ```yaml
+        ssh:
+          install-server: true
+          authorized-keys:
+            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host
+        ```
+
+      - Add your Key to GitHub
+        - Go to **GitHub Settings > SSH and GPG keys > New SSH Key**.
+        - Paste the key and give it a name like "Thin Host Laptop."
+
+      - Copy your SSH keys to `~/Downloads/Lifeboat`
+
+        ```bash
+        cp $HOME/.ssh/id_ed25519.pub $HOME/.ssh/id_ed25519.pub $HOME/Downloads/Lifeboat/
+        ```
+
+6. **The "Lifeboat" USB:** Copy `~/Downloads/Lifeboat` to a standard storage USB.
+
+## Phase 1: The "Thin Host" Installation
+
+1. Plug both the **Installer** and **CIDATA** drives into your laptop.
+
+2. Reboot machine and press F12 to bring up the boot menu.
+
+3. Boot from the Installer USB. At the GRUB menu, highlight **"Install Ubuntu"**.
+
+## Phase 2: Host Personalization (Secrets & Dotfiles)
+
+Once you log in to your fresh host, establish your sovereignty.
+
+1. Copy contents of Lifeboat USB to `$HOME/Downloads/Lifeboat`
+
+1. **Restore SSH** 
+    - Copy `id_ed25519` and `id_ed25519.pub` to `~/.ssh/`
+
+      ```bash
+      mv $HOME/Downloads/Lifeboat/id_ed25519 $HOME/Downloads/Lifeboat/id_ed25519.pub $HOME/.ssh/
+      ```
+
+    - Restrict permissions on `id_ed25519`
+
+      ```bash
+      chmod 600 ~/.ssh/id_ed25519
+      ```
+
+2. **Set up secrets management**
+    - Generate GPG key
+      ```bash
+      gpg --full-generate-key   
+      
+      # At the "Please select what kind of key you want:" prompt, select "(9) ECC (sign and encrypt) *default*"
+      # At the "Please select which elliptic curve you want:" prompt, select "(1) Curver 25519 *default*"
+      # At the "Please specify how long the key should be valid>" prompt, select "0 = key does not expire"
+      # Follow the rest of the prompts
+      ```
+    - Backup GPG key
+      ```bash
+      gpg --export-secret-key <YOUR_KEY_ID> | paperkey --output-type base16 > $HOME/Downloads/Lifeboat/gpg_paper.txt
+      ```
+    - Initialize Pass
+      ```bash
+      pass init <YOUR_KEY_ID>
+      ```
+    - Sync your secrets to your private GitHub repo
+
+      ```bash
+      pass git init
+
+      # pass git config --global user.name "Your Name"
+      # pass git config --global user.email "your@email.com"
+      # pass git config --global init.defaultBranch main
+
+      # Go to GitHub and create a new private repository called "my-passwords"
+
+      pass git remote add origin git@github.com:youruser/my-passwords.git
+      pass git push -u origin main
+      ```
+
+3. **Restore Dotfiles**
+
+    ```bash
+    git clone git@github.com:youruser/private-dotfiles.git ~/.dotfiles
+
+    cd ~/.dotfiles && stow bash nvim git host-only
+    ```
+
+## Phase 3: The Virtual Lab
+
+### 1. Create an executable installation script
+
+1. Create `deploy-vm.sh` at `~/Downloads/`
+
+    ```bash
+    #!/bin/bash
+    # Make executable: chmod +x deploy-vm.sh
+    # Usage: sudo ./deploy-vm.sh <vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
+    # Default: 4096 MiB RAM, 4 vCPUs, 40 GiB Disk (Linked Clone)
+
+    # --- 1. Dynamic Variables & Defaults ---
+    VM_NAME=$1
+    if [ -z "$VM_NAME" ]; then
+        echo "❌ Error: No VM name specified."
+        echo "Usage: $0 <vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
+        exit 1
+    fi
+
+    MEM=4096
+    CPUS=4
+    DISK=40
+
+    shift
+
+    # --- 2. Flag Handling ---
+    while getopts "dfm:c:s:" opt; do
+      case $opt in
+        d)
+          echo "🔥 Self-Destruct Initiated for $VM_NAME..."
+          sudo virsh destroy "$VM_NAME" 2>/dev/null
+          sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
+          sudo rm -f "/var/lib/libvirt/images/$VM_NAME-meta-data" "/var/lib/libvirt/images/$VM_NAME-seed.iso"
+          echo "✨ Environment cleared."
+          exit 0
+          ;;
+        f)
+          echo "♻️ Force flag detected. Removing local base image..."
+          sudo rm -f "/var/lib/libvirt/images/resolute-base.img"
+          ;;
+        m) MEM=$OPTARG ;;
+        c) CPUS=$OPTARG ;;
+        s) DISK=$OPTARG ;;
+        \?) exit 1 ;;
+      esac
+    done
+
+    # --- 3. Internal Paths ---
+    PREFIX=$(echo "$VM_NAME" | sed 's/-vm$//')
+    USER_DATA="./${PREFIX}-user-data.yaml"
+    LIBVIRT_DIR="/var/lib/libvirt/images"
+    BASE_IMG="$LIBVIRT_DIR/resolute-base.img"
+    VM_DISK="$LIBVIRT_DIR/$VM_NAME.qcow2"
+    META_DATA="$LIBVIRT_DIR/$VM_NAME-meta-data"
+    SEED_ISO="$LIBVIRT_DIR/$VM_NAME-seed.iso"
+    BASE_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
+    SHA_URL="https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS"
+
+    # --- 4. Pre-Flight Checks ---
+    if [ ! -f "$USER_DATA" ]; then
+        echo "❌ Error: Configuration file '$USER_DATA' not found."
+        exit 1
+    fi
+
+    if [ "$EUID" -ne 0 ]; then 
+      echo "Please run as root (sudo) for deployment"
+      exit
+    fi
+
+    # Detect the real user who invoked sudo and discover their real home directory
+    REAL_USER=${SUDO_USER:-$USER}
+    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+    # --- 5. Synchronize & Verify Base Image ---
+    if [ ! -f "$BASE_IMG" ]; then
+        echo "📡 Downloading Ubuntu Cloud Image..."
+        wget -c --no-verbose -P "$LIBVIRT_DIR" "$BASE_IMG_URL"
+        mv "$LIBVIRT_DIR/resolute-server-cloudimg-amd64v3.img" "$BASE_IMG" 2>/dev/null
+    fi
+
+    echo "🛡️ Verifying integrity..."
+    curl -s "$SHA_URL" | grep "resolute-server-cloudimg-amd64v3.img" > /tmp/sha256
+    sed -i "s/resolute-server-cloudimg-amd64v3.img/resolute-base.img/" /tmp/sha256
+    (cd "$LIBVIRT_DIR" && sha256sum --check --status /tmp/sha256) || { echo "❌ Checksum failed!"; exit 1; }
+
+    # --- 6. Provision & Seed ---
+    echo "🧹 Cleaning up existing $VM_NAME resources..."
+    sudo virsh destroy "$VM_NAME" 2>/dev/null
+    sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
+
+    echo "🌱 Generating Cloud-Init seed..."
+    cat <<EOF > "$META_DATA"
+    instance-id: $VM_NAME-$(date +%s)
+    local-hostname: $VM_NAME
+    EOF
+    cloud-localds "$SEED_ISO" "$USER_DATA" "$META_DATA"
+
+    echo "💾 Creating linked clone: $VM_DISK (${DISK}GB)..."
+    sudo qemu-img create -f qcow2 -b "$BASE_IMG" -F qcow2 "$VM_DISK" "${DISK}G"
+
+    # --- 7. Launch ---
+    echo "🚀 Launching $VM_NAME ($MEM MiB RAM, $CPUS vCPUs)..."
+    virt-install \
+      --name "$VM_NAME" \
+      --osinfo ubuntu-lts-latest \
+      --cpu host-model \
+      --memory "$MEM" \
+      --vcpus "$CPUS" \
+      --import \
+      --disk path="$VM_DISK" \
+      --disk path="$SEED_ISO",device=cdrom \
+      --network network=default \
+      --graphics none \
+      --noautoconsole
+
+    # --- 8. Post-Flight: Monitor the Black Box ---
+    echo "⏳ Waiting for VM to claim an IP..."
+    MAX_RETRIES=30
+    COUNT=0
+    while [ -z "$VM_IP" ] && [ $COUNT -lt $MAX_RETRIES ]; do
+        VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
+        sleep 2
+        ((COUNT++))
+    done
+
+    if [ -z "$VM_IP" ]; then
+        echo "⚠️ IP detection timed out. Check manually with 'virsh domifaddr $VM_NAME'."
+        exit 1
+    fi
+
+    echo "🚀 $VM_NAME is live at $VM_IP. Waiting for configuration to finish..."
+
+    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=5 devuser@$VM_IP "cloud-init status --wait"
+
+    # --- 9. Automated SSH Configuration ---
+    echo "⚙️  Wiring up SSH configuration for $VM_NAME..."
+
+    # Ensure the modular directory exists in the true invoking user's home folder
+    mkdir -p "$REAL_HOME/.ssh/conf.d"
+
+    # Create or overwrite the VM's specific config file path dynamically
+    cat << EOF > "$REAL_HOME/.ssh/conf.d/$VM_NAME"
+    Host $VM_NAME
+      HostName $VM_IP
+      User devuser
+      IdentityFile ~/.ssh/id_ed25519
+      ForwardAgent yes
+      IdentitiesOnly yes
+      StrictHostKeyChecking no
+      UserKnownHostsFile /dev/null
+    EOF
+
+    # Ensure permissions and system ownership are handed back to the normal user context
+    chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.ssh/conf.d"
+    chmod 700 "$REAL_HOME/.ssh/conf.d"
+    chmod 600 "$REAL_HOME/.ssh/conf.d/$VM_NAME"
+
+    echo "------------------------------------------------"
+    echo "✅ $VM_NAME is FULLY PROVISIONED and ready!"
+    echo "------------------------------------------------"
+    echo "Please wait a couple of minutes before connecting by typing:"
+    echo "ssh $VM_NAME"
+    echo "as the installation may still be completing."
+    echo "------------------------------------------------"
+    ```
 
 2. Make `deploy-vm.sh` executable
 
