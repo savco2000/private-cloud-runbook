@@ -533,9 +533,8 @@ Once you log in to your fresh host, establish your sovereignty.
       # Enable strict error handling: fail fast on errors or unset variables
       set -euo pipefail
 
-      # Define a single source of truth for the output path
-      OUTPUT_FILE="$HOME/Downloads/dotnet-user-data.yaml"
-      mkdir -p "$(dirname "$OUTPUT_FILE")"
+      # Dynamically set the output path to the exact directory where this script resides
+      OUTPUT_FILE="$(dirname "$0")/dotnet-user-data.yaml"
 
       # 1. Dynamically pull identity and SSH keys from the password manager
       # Fetch git secrets once to halve the GPG decryption overhead
