@@ -357,15 +357,35 @@ Once you log in to your fresh host, establish your sovereignty.
     ```bash
     #!/bin/bash
     # Make executable: chmod +x deploy-vm.sh
-    # Usage: sudo ./deploy-vm.sh <vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
+    # Usage: sudo ./deploy-vm.sh <config.yaml | vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
     # Default: 4096 MiB RAM, 4 vCPUs, 40 GiB Disk (Linked Clone)
 
     # --- 1. Dynamic Variables & Defaults ---
-    VM_NAME=$1
-    if [ -z "$VM_NAME" ]; then
-        echo "❌ Error: No VM name specified."
-        echo "Usage: $0 <vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
+    TARGET=$1
+    if [ -z "$TARGET" ]; then
+        echo "❌ Error: No target specified."
+        echo "Usage: $0 <user-data.yaml | vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
         exit 1
+    fi
+
+    # Smart Input Parsing: Determine if target is a file or a VM name
+    if [[ "$TARGET" =~ \.(yaml|yml)$ ]]; then
+        # Input is a file path
+        USER_DATA="$TARGET"
+        FILENAME=$(basename "$TARGET")
+        PREFIX=$(echo "$FILENAME" | sed -E 's/-user-data\.(yaml|yml)$//')
+        VM_NAME="${PREFIX}-vm"
+    else
+        # Input is a string (VM name or prefix)
+        if [[ "$TARGET" == *-vm ]]; then
+            VM_NAME="$TARGET"
+            PREFIX="${TARGET%-vm}"
+        else
+            PREFIX="$TARGET"
+            VM_NAME="${PREFIX}-vm"
+        fi
+        # Guess the local user-data path in case they are creating rather than destroying
+        USER_DATA="./${PREFIX}-user-data.yaml"
     fi
 
     MEM=4096
@@ -397,8 +417,6 @@ Once you log in to your fresh host, establish your sovereignty.
     done
 
     # --- 3. Internal Paths ---
-    PREFIX=$(echo "$VM_NAME" | sed 's/-vm$//')
-    USER_DATA="./${PREFIX}-user-data.yaml"
     LIBVIRT_DIR="/var/lib/libvirt/images"
     BASE_IMG="$LIBVIRT_DIR/resolute-base.img"
     VM_DISK="$LIBVIRT_DIR/$VM_NAME.qcow2"
@@ -468,13 +486,13 @@ Once you log in to your fresh host, establish your sovereignty.
     echo "⏳ Waiting for VM to claim an IP..."
     MAX_RETRIES=30
     COUNT=0
-    while [ -z "$VM_IP" ] && [ $COUNT -lt $MAX_RETRIES ]; do
-        VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b")
+    while [ -z "${VM_IP:-}" ] && [ $COUNT -lt $MAX_RETRIES ]; do
+        VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" || true)
         sleep 2
         ((COUNT++))
     done
 
-    if [ -z "$VM_IP" ]; then
+    if [ -z "${VM_IP:-}" ]; then
         echo "⚠️ IP detection timed out. Check manually with 'virsh domifaddr $VM_NAME'."
         exit 1
     fi
