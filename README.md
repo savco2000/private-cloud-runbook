@@ -24,28 +24,19 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
 3. **The CIDATA USB:** Format a second small USB drive as **FAT32** with the volume label exactly `CIDATA`.
 
-    - Create a directory named `Lifeboat` under `~/Downloads/Lifeboat/`.
-
-      ```bash
-      mkdir -p $HOME/Lifeboat/host
-      ```
-
-    - Create a file named `meta-data` at `~/Lifeboat/` and leave it empty.
-
-      ```bash
-      touch $HOME/Lifeboat/host/meta-data
-      ```
-
-    - Create a file named `user-data` at `~/Downloads/Lifeboat/host`.
+    - Create `user-data` and `meta-data` files at `~/Downloads/Lifeboat/host`.
 
       ```bash
       #!/bin/bash
       # Enable strict error handling: fail fast on errors or unset variables
       set -euo pipefail
 
-      # Define a single source of truth for the output path
+      # Define a single source of truth for the output paths
       OUTPUT_FILE="$HOME/Lifeboat/host/user-data"
+      META_DATA_FILE="$(dirname "$OUTPUT_FILE")/meta-data"
+
       mkdir -p "$(dirname "$OUTPUT_FILE")"
+      touch "$META_DATA_FILE" # Ensure the empty meta-data file exists
 
       # 1. Dynamically pull identity and SSH keys
       # Fetch the host secrets exactly once to save GPG decryption overhead
@@ -200,7 +191,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
         -e "s|__GIT_EMAIL_PLACEHOLDER__|$GIT_EMAIL|g" \
         "$OUTPUT_FILE"
 
-      echo "✨ user-data file successfully generated at $OUTPUT_FILE"
+      echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
       ```
 
 4. **Generate random salted hashed password**
