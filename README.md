@@ -38,8 +38,37 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
       mkdir -p "$(dirname "$OUTPUT_FILE")"
       touch "$META_DATA_FILE" # Ensure the empty meta-data file exists
 
-      # 1. Dynamically pull identity and SSH keys
+      # --- 1. Optional Password Rotation ---
+      echo "------------------------------------------------"
+      read -p "🔄 Do you want to rotate the host password before generating? (y/N): " ROTATE_PWD
+      if [[ "$ROTATE_PWD" =~ ^[Yy]$ ]]; then
+          read -s -p "   Enter new plaintext password: " RAW_PWD
+          echo ""
+          read -s -p "   Confirm new plaintext password: " RAW_PWD_CONFIRM
+          echo ""
+          
+          if [ "$RAW_PWD" != "$RAW_PWD_CONFIRM" ]; then
+              echo "❌ Passwords do not match! Exiting script."
+              exit 1
+          fi
+          
+          echo "⚙️  Hashing password and updating 'host' entry in pass..."
+          NEW_HASH=$(echo "$RAW_PWD" | mkpasswd -m sha-512 -s)
+          
+          # Pull the existing record, replace line 1 (plaintext), and replace the hashed-password line
+          EXISTING_SECRETS=$(pass show host)
+          UPDATED_SECRETS=$(echo "$EXISTING_SECRETS" | sed "1s|.*|$RAW_PWD|" | sed "s|^hashed-password:.*|hashed-password: $NEW_HASH|")
+          
+          # Pipe it back into pass (-f forces overwrite without prompting)
+          echo "$UPDATED_SECRETS" | pass insert -f -m host > /dev/null
+          
+          echo "✅ Password successfully rotated and saved to your vault!"
+      fi
+      echo "------------------------------------------------"
+
+      # --- 2. Dynamically pull identity and SSH keys ---
       # Fetch the host secrets exactly once to save GPG decryption overhead
+      # (This will now seamlessly grab the newly updated hash if you just rotated it!)
       HOST_SECRETS=$(pass show host)
       GIT_SECRETS=$(pass show github/personal)
 
@@ -51,7 +80,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
       GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
       GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
 
-      # 2. Generate the configuration file with safe placeholders
+      # --- 3. Generate the configuration file with safe placeholders ---
       cat << 'OUTER_EOF' > "$OUTPUT_FILE"
       #cloud-config
       autoinstall:
@@ -180,7 +209,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
               fi
       OUTER_EOF
 
-      # 3. Safely inject all parameters in a single disk I/O operation
+      # --- 4. Safely inject all parameters in a single disk I/O operation ---
       sed -i \
         -e "s|__SSH_PUB_KEY_PLACEHOLDER__|$SSH_PUB_KEY|g" \
         -e "s|__HASHED_PASSWORD_PLACEHOLDER__|$HASHED_PASSWORD|g" \
@@ -193,32 +222,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
       echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
       ```
-
-4. **Generate random salted hashed password**
-
-    - Run the following command to generate a random salted hashed password.
-
-      ```bash
-      mkpasswd -m sha-512 | tee $HOME/Downloads/Lifeboat/hashed_password.txt
-      ```
-
-    - It will output a single line that looks something like this:
-
-      `$6$EXAMPLERANDOM$HashedPassword...`
-
-    - Update your **user-data**
-
-      Copy that entire line and paste it into your host's `user-data` file under the `identity` section:
-
-      ```yaml
-      identity:
-        hostname: ubuntu-host
-        realname: "Primary Developer"
-        username: devuser
-        password: "$6$EXAMPLERANDOM$HashedPassword..."
-      ```
-
-5. **Generate the SSH key**
+4. **Generate the SSH key**
 
     - Run this command on the machine you will be using to access your host (e.g., your current laptop):
 
@@ -269,7 +273,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
         cp $HOME/.ssh/id_ed25519.pub $HOME/.ssh/id_ed25519.pub $HOME/Downloads/Lifeboat/
         ```
 
-6. **The "Lifeboat" USB:** Copy `~/Downloads/Lifeboat` to a standard storage USB.
+5. **The "Lifeboat" USB:** Copy `~/Downloads/Lifeboat` to a standard storage USB.
 
 ## Phase 1: The "Thin Host" Installation
 
