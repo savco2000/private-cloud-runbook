@@ -64,11 +64,55 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
           
           echo "✅ Password successfully rotated and saved to your vault!"
       fi
+
+      # --- 2. Optional SSH Key Rotation ---
+      echo "------------------------------------------------"
+      read -p "🔑 Do you want to rotate the SSH key pair? (y/N): " ROTATE_SSH
+      if [[ "$ROTATE_SSH" =~ ^[Yy]$ ]]; then
+          read -s -p "   Enter passphrase for new SSH key (leave blank for none): " SSH_PASS
+          echo ""
+          
+          echo "⚙️  Generating new ed25519 SSH key pair..."
+          # Create a secure temporary directory that only your user can access
+          TEMP_SSH_DIR=$(mktemp -d)
+          
+          # Generate the key pair silently
+          ssh-keygen -t ed25519 -f "$TEMP_SSH_DIR/id_ed25519" -N "$SSH_PASS" -C "devuser@ubuntu-host" -q
+          
+          # Read the newly generated keys
+          NEW_PUB_KEY=$(cat "$TEMP_SSH_DIR/id_ed25519.pub")
+          NEW_PRIV_KEY=$(cat "$TEMP_SSH_DIR/id_ed25519")
+          
+          echo "⚙️  Updating SSH keys in pass..."
+          # Inject the keys into the password manager using the multiline (-m) flag
+          echo "$NEW_PUB_KEY" | pass insert -f -m ssh/public-key > /dev/null
+          echo "$NEW_PRIV_KEY" | pass insert -f -m ssh/private-key > /dev/null
+          
+          # Securely remove the temporary directory and its contents
+          rm -rf "$TEMP_SSH_DIR"
+          echo "✅ SSH keys successfully rotated and saved to your vault!"
+          
+          echo "⚠️  NOTE: Because you rotated your key, you MUST upload your new public key to GitHub!"
+      fi
       echo "------------------------------------------------"
 
-      # --- 2. Dynamically pull identity and SSH keys ---
+      # --- 3. Stage Local SSH Environment ---
+      echo "⚙️  Staging local SSH keys for immediate use..."
+      mkdir -p "$HOME/.ssh"
+      chmod 700 "$HOME/.ssh"
+
+      # Extract keys directly into the standard OpenSSH paths
+      pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
+      pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
+
+      # Lock down permissions to prevent "Bad owner or permissions" errors
+      chmod 600 "$HOME/.ssh/id_ed25519"
+      chmod 644 "$HOME/.ssh/id_ed25519.pub"
+      echo "✅ SSH keys are staged and ready in ~/.ssh/"
+      echo "------------------------------------------------"
+
+      # --- 4. Dynamically pull identity and SSH keys ---
       # Fetch the host secrets exactly once to save GPG decryption overhead
-      # (This will now seamlessly grab the newly updated hash if you just rotated it!)
       HOST_SECRETS=$(pass show host)
       GIT_SECRETS=$(pass show github/personal)
 
@@ -80,7 +124,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
       GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
       GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
 
-      # --- 3. Generate the configuration file with safe placeholders ---
+      # --- 5. Generate the configuration file with safe placeholders ---
       cat << 'OUTER_EOF' > "$OUTPUT_FILE"
       #cloud-config
       autoinstall:
@@ -209,7 +253,7 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
               fi
       OUTER_EOF
 
-      # --- 4. Safely inject all parameters in a single disk I/O operation ---
+      # --- 6. Safely inject all parameters in a single disk I/O operation ---
       sed -i \
         -e "s|__SSH_PUB_KEY_PLACEHOLDER__|$SSH_PUB_KEY|g" \
         -e "s|__HASHED_PASSWORD_PLACEHOLDER__|$HASHED_PASSWORD|g" \
@@ -222,59 +266,6 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
       echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
       ```
-4. **Generate the SSH key**
-
-    - Run this command on the machine you will be using to access your host (e.g., your current laptop):
-
-      ```bash
-      ssh-keygen -t ed25519 -C "devuser@ubuntu-host"
-      ```
-
-    - Follow the Prompts
-      - **Enter file in which to save the key:** Press Enter to accept the default location (`~/.ssh/id_ed25519`).
-      - **Enter passphrase:** It is highly recommended to enter a passphrase. This adds a second layer of security.
-
-    - Identify Your Keys
-      
-      The command creates two files in your `~/.ssh/` directory:
-      - `id_ed25519` **(Private Key):** This stays on your laptop. Never share it.
-      - `id_ed25519.pub` **(Public Key):** This is the one we inject.
-
-    - Extract the Public Key for your **user-data**
-
-      To get the string you need for your autoinstall file, run:
-
-      ```bash
-      cat ~/.ssh/id_ed25519.pub
-      ```
-
-      It will output a single line that looks something like this:
-
-      `ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host`
-
-      - Update your **user-data**
-
-        Copy that entire line and paste it into your host's `user-data` file under the `ssh` section:
-
-        ```yaml
-        ssh:
-          install-server: true
-          authorized-keys:
-            - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... devuser@ubuntu-host
-        ```
-
-      - Add your Key to GitHub
-        - Go to **GitHub Settings > SSH and GPG keys > New SSH Key**.
-        - Paste the key and give it a name like "Thin Host Laptop."
-
-      - Copy your SSH keys to `~/Downloads/Lifeboat`
-
-        ```bash
-        cp $HOME/.ssh/id_ed25519.pub $HOME/.ssh/id_ed25519.pub $HOME/Downloads/Lifeboat/
-        ```
-
-5. **The "Lifeboat" USB:** Copy `~/Downloads/Lifeboat` to a standard storage USB.
-
 ## Phase 1: The "Thin Host" Installation
 
 1. Plug both the **Installer** and **CIDATA** drives into your laptop.
