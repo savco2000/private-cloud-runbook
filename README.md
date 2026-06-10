@@ -301,64 +301,36 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 ## Phase 2: Host Personalization (Secrets & Dotfiles)
 
-Once you log in to your fresh host, establish your sovereignty.
+Once you log in to your fresh host, establish your sovereignty by importing your GPG private key and restore key trust mappings.
 
-1. Copy contents of Lifeboat USB to `$HOME/Downloads/Lifeboat`
-
-1. **Restore SSH** 
-    - Copy `id_ed25519` and `id_ed25519.pub` to `~/.ssh/`
-
-      ```bash
-      mv $HOME/Downloads/Lifeboat/id_ed25519 $HOME/Downloads/Lifeboat/id_ed25519.pub $HOME/.ssh/
-      ```
-
-    - Restrict permissions on `id_ed25519`
-
-      ```bash
-      chmod 600 ~/.ssh/id_ed25519
-      ```
-
-2. **Set up secrets management**
-    - Generate GPG key
-      ```bash
-      gpg --full-generate-key   
-      
-      # At the "Please select what kind of key you want:" prompt, select "(9) ECC (sign and encrypt) *default*"
-      # At the "Please select which elliptic curve you want:" prompt, select "(1) Curver 25519 *default*"
-      # At the "Please specify how long the key should be valid>" prompt, select "0 = key does not expire"
-      # Follow the rest of the prompts
-      ```
-    - Backup GPG key
-      ```bash
-      gpg --export-secret-key <YOUR_KEY_ID> | paperkey --output-type base16 > $HOME/Downloads/Lifeboat/gpg_paper.txt
-      ```
-    - Initialize Pass
-      ```bash
-      pass init <YOUR_KEY_ID>
-      ```
-    - Sync your secrets to your private GitHub repo
-
-      ```bash
-      pass git init
-
-      # pass git config --global user.name "Your Name"
-      # pass git config --global user.email "your@email.com"
-      # pass git config --global init.defaultBranch main
-
-      # Go to GitHub and create a new private repository called "my-passwords"
-
-      pass git remote add origin git@github.com:youruser/my-passwords.git
-      pass git push -u origin main
-      ```
-
-3. **Restore Dotfiles**
-
+1. Create the Lifeboat folder
+    
     ```bash
-    git clone git@github.com:youruser/private-dotfiles.git ~/.dotfiles
-
-    cd ~/.dotfiles && stow bash nvim git host-only
+    mkdir $HOME/Lifeboat
     ```
 
+2. Copy contents of Lifeboat USB from **Phase 0** to `$HOME/Lifeboat`
+
+3. Setup SSH
+
+    ```bash
+    # Import the private key
+    gpg --import $HOME/Lifeboat/private_key.asc
+
+    # Restore your key trust mappings
+    gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
+
+    # Clone the Password Store
+    git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
+
+    # Extract keys directly into the standard OpenSSH paths
+    pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
+    pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
+
+    # Lock down permissions to prevent "Bad owner or permissions" errors
+    chmod 600 "$HOME/.ssh/id_ed25519"
+    chmod 644 "$HOME/.ssh/id_ed25519.pub"
+    ```
 ## Phase 3: The Virtual Lab
 
 ### 1. Create an executable installation script
