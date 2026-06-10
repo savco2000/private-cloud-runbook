@@ -287,6 +287,8 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB.
 
+5. Copy `private_key.asc` and `ownertrust.txt` to a "Lifeboat" USB. These will be used to import your private key and restore your key trust mappings in the new machine's `pass` so **keep this USB safe!**
+
 ## Phase 1: The "Thin Host" Installation
 
 1. **Plug-in host's Ethernet cable:** Make sure your machine is physically plugged in. Otherwise, the installation will fail.
