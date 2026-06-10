@@ -23,8 +23,6 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
     ```bash
     #!/bin/bash
-    # Make executable: chmod +x forge-host.sh
-    # Usage: ./forge-host.sh
     # Enable strict error handling: fail fast on errors or unset variables
     set -euo pipefail
 
@@ -262,6 +260,26 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
       "$OUTPUT_FILE"
 
     echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
+
+    # --- 7. Export GPG Private Key & Ownertrust ---
+    echo "------------------------------------------------"
+    read -p "🔐 Do you want to export your GPG private key and ownertrust for backup? (y/N): " EXPORT_GPG
+    if [[ "$EXPORT_GPG" =~ ^[Yy]$ ]]; then
+        echo "⚙️  Exporting GPG keys for $GIT_EMAIL..."
+        PRIVATE_KEY_FILE="$(dirname "$OUTPUT_FILE")/private_key.asc"
+        OWNERTRUST_FILE="$(dirname "$OUTPUT_FILE")/ownertrust.txt"
+        
+        # We use the $GIT_EMAIL dynamically pulled from pass to identify the correct GPG key
+        gpg --armor --export-secret-keys "$GIT_EMAIL" > "$PRIVATE_KEY_FILE"
+        gpg --export-ownertrust > "$OWNERTRUST_FILE"
+        
+        # Secure the exported private key permissions so SSH/Linux doesn't complain later
+        chmod 600 "$PRIVATE_KEY_FILE"
+        
+        echo "✅ GPG private key saved to: $PRIVATE_KEY_FILE"
+        echo "✅ GPG ownertrust saved to: $OWNERTRUST_FILE"
+    fi
+    echo "------------------------------------------------"
     ```
 2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive.
 
