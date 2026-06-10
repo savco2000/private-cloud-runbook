@@ -31,11 +31,13 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
     ```bash
     #!/bin/bash
+    # Make executable: chmod +x forge-host.sh
+    # Usage: ./forge-host.sh
     # Enable strict error handling: fail fast on errors or unset variables
     set -euo pipefail
 
     # Define a single source of truth for the output paths
-    OUTPUT_FILE="$HOME/Lifeboat/host/user-data"
+    OUTPUT_FILE="$(dirname "$0")/user-data"
     META_DATA_FILE="$(dirname "$OUTPUT_FILE")/meta-data"
 
     mkdir -p "$(dirname "$OUTPUT_FILE")"
