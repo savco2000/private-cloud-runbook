@@ -16,16 +16,8 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 ## Phase 0: The "Off-Laptop" Preparation
 
-Before you wipe your drive, prepare these three "External Keys" on other devices.
-
-1. **Plug-in host's Ethernet cable:** Make sure your machine is physically plugged in. Otherwise, the installation will fail.
-
-2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive.
-
-3. **The CIDATA USB:** Format a second small USB drive as **FAT32** with the volume label exactly `CIDATA`.
-
-4. Create and run `forge-host.sh` which:
-    - Creates the host's user-data and meta-data files
+1. Create and run `forge-host.sh` which:
+    - Creates the host's user-data and meta-data files in the same directory `forge-host.sh` is run from
     - Optionally rotates the host's password in `pass`
     - Optionally rotates the SSH keys in `pass`
 
@@ -271,13 +263,21 @@ Before you wipe your drive, prepare these three "External Keys" on other devices
 
     echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
     ```
+2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive.
+
+3. **The CIDATA USB:** Format a second small USB drive as **FAT32** with the volume label exactly `CIDATA`.
+
+4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB.
+
 ## Phase 1: The "Thin Host" Installation
 
-1. Plug both the **Installer** and **CIDATA** drives into your laptop.
+1. **Plug-in host's Ethernet cable:** Make sure your machine is physically plugged in. Otherwise, the installation will fail.
 
-2. Reboot machine and press F12 to bring up the boot menu.
+2. Plug both the **Installer** and **CIDATA** drives into your laptop.
 
-3. Boot from the Installer USB. At the GRUB menu, highlight **"Install Ubuntu"**.
+3. Reboot machine and press **F12** to bring up the boot menu.
+
+4. Boot from the Installer USB. At the GRUB menu, highlight **"Install Ubuntu"**.
 
 ## Phase 2: Host Personalization (Secrets & Dotfiles)
 
