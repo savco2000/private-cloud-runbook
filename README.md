@@ -12,6 +12,39 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 * **Deterministic Configuration Lifecycle:** Leverages local NoCloud cloud-init data-source wrappers to automatically wire up container engines, system packages, global development environments, network configurations, and drop-proof terminal sessions (`byobu`) synchronously before terminating the host thread.
 
+## Quick Start
+
+Use this if you want the fastest successful path without reading every detail first.
+
+1. Verify prerequisites in the next section.
+2. Run `forge-host.sh` to generate `user-data` and `meta-data`.
+3. Prepare two USB drives: Ubuntu installer + `CIDATA`.
+4. Copy `user-data` and `meta-data` to the `CIDATA` USB.
+5. Optionally export `private_key.asc` and `ownertrust.txt` to your Lifeboat USB.
+6. Install the host using the installer + `CIDATA` drives.
+7. Restore GPG trust and SSH from Lifeboat on first host login.
+8. Create `deploy-vm.sh` and make it executable.
+9. Generate VM cloud-init files and deploy your first VM.
+10. Verify VM health with `ssh <vm-name>`, `docker ps`, and `virsh list --all`.
+
+## Prerequisites
+
+Confirm these before Phase 0 to avoid mid-run failures.
+
+- Host hardware supports virtualization (VT-x/AMD-V enabled in BIOS/UEFI)
+- Ubuntu 26.04 installer ISO downloaded
+- Two USB drives available (installer + `CIDATA`)
+- `pass` store initialized and accessible
+- GPG key available for `pass` decryption
+- GitHub SSH access working for password-store clone
+
+Recommended pre-flight checks:
+
+```bash
+command -v pass gpg ssh-keygen virsh qemu-img cloud-localds >/dev/null && echo "tooling ok"
+pass show host >/dev/null && echo "pass entry ok"
+```
+
 ---
 
 ## Phase 0: The "Off-Laptop" Preparation
@@ -289,6 +322,12 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 5. Copy `private_key.asc` and `ownertrust.txt` to a "Lifeboat" USB. These will be used to import your private key and restore your key trust mappings in the new machine's `pass` so **keep this USB safe!**
 
+**Phase 0 checkpoint:**
+
+```bash
+ls -l user-data meta-data
+```
+
 ## Phase 1: The "Thin Host" Installation
 
 1. **Plug-in host's Ethernet cable:** Make sure your machine is physically plugged in. Otherwise, the installation will fail.
@@ -299,7 +338,13 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 
 4. Boot from the Installer USB. At the GRUB menu, highlight **"Install Ubuntu"**.
 
-## Phase 2: Host Personalization (Secrets & Dotfiles)
+**Phase 1 checkpoint:**
+
+- You can log into the newly installed host.
+- `virsh --version` returns successfully.
+- SSH directory exists at `$HOME/.ssh/`.
+
+## Phase 2: Host Personalization (Secrets & SSH Recovery)
 
 Once you log in to your fresh host, establish your sovereignty by importing your GPG private key and restore key trust mappings.
 
@@ -314,6 +359,9 @@ Once you log in to your fresh host, establish your sovereignty by importing your
 3. Setup SSH
 
     ```bash
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+
     # Import the private key
     gpg --import $HOME/Lifeboat/private_key.asc
 
@@ -330,7 +378,18 @@ Once you log in to your fresh host, establish your sovereignty by importing your
     # Lock down permissions to prevent "Bad owner or permissions" errors
     chmod 600 "$HOME/.ssh/id_ed25519"
     chmod 644 "$HOME/.ssh/id_ed25519.pub"
+
+    # Optional: remove key export artifacts after successful import
+    rm -f "$HOME/Lifeboat/private_key.asc" "$HOME/Lifeboat/ownertrust.txt"
     ```
+
+  **Phase 2 checkpoint:**
+
+  ```bash
+  pass show ssh/public-key >/dev/null && echo "pass recovered"
+  ssh -T git@github.com
+  ```
+
 ## Phase 3: The Virtual Lab
 
 ### 1. Create an executable installation script
@@ -703,13 +762,20 @@ Once you log in to your fresh host, establish your sovereignty by importing your
 
     - Verify installation
       - Run `openclaw gateway start`
-      - Open an SSH tunnel from your host: `ssh -L 18789:localhost:18789 devuser@openclaw-ip`
+      - Open an SSH tunnel from your host: `ssh -L 18789:localhost:18789 openclaw-vm`
       - Access the UI at `http://localhost:18789`
       - Before running a risky AI experiment, freeze the target image: `virsh snapshot-create-as openclaw-vm pre-experiment`
 
+    Phase 3 checkpoint:
+
+    ```bash
+    virsh list --all
+    ssh dotnet-vm "cloud-init status"
+    ```
+
 ## Phase 4: Managing Host and Virtual Machines
 
-## 1. Updating Host's Firmware
+### 1. Updating Host's Firmware
 
 Update host's firmware once a month.
 
@@ -717,7 +783,7 @@ Update host's firmware once a month.
 fwupdmgr update
 ```
 
-## 2. Listing VMs
+### 2. Listing VMs
 
 To see what is running or what has been created on your host, use the `list` command.
 
@@ -733,7 +799,7 @@ virsh list
 virsh list --all
 ```
 
-## 3. Starting a VM
+### 3. Starting a VM
 
 To power on a virtual machine that is currently shut down:
 
@@ -742,7 +808,7 @@ virsh start <vm-name>
 # Example: virsh start dotnet-vm
 ```
 
-## 4. Stopping a VM
+### 4. Stopping a VM
 
 There are two ways to turn off a VM, depending on whether you want a polite request or an instant pull of the virtual power cord.
 
@@ -763,14 +829,14 @@ virsh destroy <vm-name>
 # Example: virsh destroy dotnet-vm
 ```
 
-## 5. Creating a Snapshot of a VM
+### 5. Creating a Snapshot of a VM
 
 ```bash
 virsh snapshot-create-as <vm-name> pre-experiment
 # Example: virsh snapshot-create-as openclaw-vm pre-experiment
 ```
 
-## 6. Checking IP Addresses
+### 6. Checking IP Addresses
 
 You can grab a running VM's network information without using the full console anytime by running
 
@@ -778,3 +844,14 @@ You can grab a running VM's network information without using the full console a
 virsh domifaddr <vm-name>
 # Example: virsh domifaddr openclaw-vm
 ```
+
+## Common Issues and Fast Fixes
+
+1. `cloud-init status --wait` hangs longer than expected
+  - Check from host: `ssh <vm-name> "sudo tail -n 100 /var/log/cloud-init-output.log"`
+2. VM has no IP address in `virsh domifaddr`
+  - Confirm default network is up: `virsh net-start default && virsh net-autostart default`
+3. SSH says bad permissions on private key
+  - Fix with: `chmod 700 ~/.ssh && chmod 600 ~/.ssh/id_ed25519 && chmod 644 ~/.ssh/id_ed25519.pub`
+4. `pass` fails to decrypt
+  - Re-import key and trust: `gpg --import private_key.asc && gpg --import-ownertrust ownertrust.txt`
