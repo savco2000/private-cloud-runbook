@@ -362,9 +362,9 @@ pass show host >/dev/null && echo "pass entry ok"
       - `-n CIDATA` or `-n LIFEBOAT`: sets the volume label the host will look for.
       - `/dev/sda`: the target USB drive. Replace this with the correct base device from `lsblk`.
 
-4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB.
+4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB drive.
 
-5. Format a separate USB drive with the label `LIFEBOAT`, then copy `private_key.asc` and `ownertrust.txt` to it. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
+5. Copy `private_key.asc` and `ownertrust.txt` to the LIFEBOAT USB drive. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
 
 **Phase 0 checkpoint:**
 
