@@ -314,13 +314,57 @@ pass show host >/dev/null && echo "pass entry ok"
     fi
     echo "------------------------------------------------"
     ```
-2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive.
+2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
 
-3. **The CIDATA USB:** Format a second small USB drive as **FAT32** with the volume label exactly `CIDATA`.
+3. Prepare the **CIDATA** and **LIFEBOAT** USB Drives
+
+    Use this workflow for the configuration USB and the backup "Lifeboat" USB. These commands erase the entire target drive, so confirm the device name carefully before continuing.
+
+    a. List attached drives and identify the correct USB device by its size.
+
+      ```bash
+      lsblk
+      ```
+
+      Look for the base device name, such as `/dev/sda`. If the drive already has partitions, you may also see entries such as `/dev/sda1`.
+
+    b. Unmount any mounted partition on that USB drive before wiping it.
+
+      ```bash
+      sudo umount /dev/sda1
+      ```
+
+    c. Remove the old filesystem signatures so the drive is a clean slate.
+
+      ```bash
+      sudo wipefs --all --force /dev/sda
+      ```
+
+    d. Format the entire USB drive as FAT32 with the correct label.
+
+      - For the cloud-init drive:
+
+          ```bash
+          sudo mkfs.vfat -F 32 -I -n CIDATA /dev/sda
+          ```
+
+      - For the backup drive:
+
+          ```bash
+          sudo mkfs.vfat -F 32 -I -n LIFEBOAT /dev/sda
+          ```
+
+      Command breakdown:
+
+      - `mkfs.vfat`: creates a FAT filesystem.
+      - `-F 32`: forces FAT32 for broad compatibility.
+      - `-I`: formats the whole base device instead of requiring a partition table.
+      - `-n CIDATA` or `-n LIFEBOAT`: sets the volume label the host will look for.
+      - `/dev/sda`: the target USB drive. Replace this with the correct base device from `lsblk`.
 
 4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB.
 
-5. Copy `private_key.asc` and `ownertrust.txt` to a "Lifeboat" USB. These will be used to import your private key and restore your key trust mappings in the new machine's `pass` so **keep this USB safe!**
+5. Format a separate USB drive with the label `LIFEBOAT`, then copy `private_key.asc` and `ownertrust.txt` to it. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
 
 **Phase 0 checkpoint:**
 
