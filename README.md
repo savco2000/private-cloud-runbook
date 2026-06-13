@@ -332,9 +332,9 @@ pass show host >/dev/null && echo "pass entry ok"
     ```
 2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
 
-3. Prepare the **CIDATA** and **LIFEBOAT** USB Drives
+3. Prepare the `CIDATA` and `LIFEBOAT` USB Drives
 
-    Use this workflow for the configuration USB and the backup "Lifeboat" USB. These commands erase the entire target drive, so confirm the device name carefully before continuing.
+    Use this workflow for the configuration USB and the backup `LIFEBOAT` USB. These commands erase the entire target drive, so confirm the device name carefully before continuing.
 
     a. List attached drives and identify the correct USB device by its size.
 
@@ -380,7 +380,7 @@ pass show host >/dev/null && echo "pass entry ok"
 
 4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB drive.
 
-5. Copy `private_key.asc` and `ownertrust.txt` to the LIFEBOAT USB drive. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
+5. Copy `private_key.asc` and `ownertrust.txt` to the `LIFEBOAT` USB drive. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
 
 **Phase 0 checkpoint:**
 
@@ -414,7 +414,7 @@ Once you log in to your fresh host, establish your sovereignty by importing your
     mkdir $HOME/Lifeboat
     ```
 
-2. Copy contents of Lifeboat USB from **Phase 0** to `$HOME/Lifeboat`
+2. Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
 
 3. Setup SSH
 
