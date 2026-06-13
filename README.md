@@ -847,17 +847,17 @@ fwupdmgr update
 
 To see what is running or what has been created on your host, use the `list` command.
 
-### a. List only ACTIVE (running) VMs:
+- List only ACTIVE (running) VMs
 
-```bash
-virsh list
-```
+  ```bash
+  virsh list
+  ```
 
-### b. List ALL VMs (running, paused, or stopped):
+- List ALL VMs (running, paused, or stopped)
 
-```bash
-virsh list --all
-```
+  ```bash
+  virsh list --all
+  ```
 
 ### 3. Starting a VM
 
@@ -872,22 +872,22 @@ virsh start <vm-name>
 
 There are two ways to turn off a VM, depending on whether you want a polite request or an instant pull of the virtual power cord.
 
-### a. Graceful Shutdown (Polite Request):
+- Graceful Shutdown (Polite Request)
 
-This sends an ACPI shutdown signal to the guest OS, letting Ubuntu close its processes cleanly.
+  This sends an ACPI shutdown signal to the guest OS, letting Ubuntu close its processes cleanly.
 
-```bash
-virsh shutdown <vm-name>
-# Example: virsh shutdown openclaw-vm
-```
-### b. Forceful Stop (The Virtual Power Cord):
+  ```bash
+  virsh shutdown <vm-name>
+  # Example: virsh shutdown openclaw-vm
+  ```
+- Forceful Stop (The Virtual Power Cord)
 
-If a VM is frozen or if you are about to run your destroy script, this instantly kills the power to the virtual instance.
+  If a VM is frozen or if you are about to run your destroy script, this instantly kills the power to the virtual instance.
 
-```bash
-virsh destroy <vm-name>
-# Example: virsh destroy dotnet-vm
-```
+  ```bash
+  virsh destroy <vm-name>
+  # Example: virsh destroy dotnet-vm
+  ```
 
 ### 5. Creating a Snapshot of a VM
 
