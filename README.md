@@ -35,11 +35,14 @@ Confirm these before Phase 0 to avoid mid-run failures.
 
   ```bash
   egrep -c '(vmx|svm)' /proc/cpuinfo
-  
+
   # If the result is > 0 you are good to go.
   ```
 - Ubuntu 26.04 installer ISO downloaded
-- Two USB drives available (installer + `CIDATA`)
+- Three USB drives available:
+  - Ubuntu 26.04 installer (8 GB to 16 GB)
+  - `CIDATA` (1 GB to 8 GB)
+  - `LIFEBOAT` (8 GB to 32 GB)
 - `pass` store initialized and accessible
 - GPG key available for `pass` decryption
 - GitHub SSH access working for password-store clone
