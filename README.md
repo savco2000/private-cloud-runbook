@@ -31,7 +31,13 @@ Use this if you want the fastest successful path without reading every detail fi
 
 Confirm these before Phase 0 to avoid mid-run failures.
 
-- Host hardware supports virtualization (VT-x/AMD-V enabled in BIOS/UEFI)
+- Host hardware supports hardware virtualization (VT-x/AMD-V enabled in BIOS/UEFI)
+
+  ```bash
+  egrep -c '(vmx|svm)' /proc/cpuinfo
+  
+  # If the result is > 0 you are good to go.
+  ```
 - Ubuntu 26.04 installer ISO downloaded
 - Two USB drives available (installer + `CIDATA`)
 - `pass` store initialized and accessible
