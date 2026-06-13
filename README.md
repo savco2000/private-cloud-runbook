@@ -17,15 +17,22 @@ An automated, hyper-efficient blueprint for transforming standard consumer hardw
 Use this if you want the fastest successful path without reading every detail first.
 
 1. Verify prerequisites in the next section.
-2. Run `forge-host.sh` to generate `user-data` and `meta-data`.
-3. Prepare two USB drives: Ubuntu installer + `CIDATA`.
-4. Copy `user-data` and `meta-data` to the `CIDATA` USB.
-5. Optionally export `private_key.asc` and `ownertrust.txt` to your Lifeboat USB.
-6. Install the host using the installer + `CIDATA` drives.
-7. Restore GPG trust and SSH from Lifeboat on first host login.
-8. Create `deploy-vm.sh` and make it executable.
-9. Generate VM cloud-init files and deploy your first VM.
-10. Verify VM health with `ssh <vm-name>`, `docker ps`, and `virsh list --all`.
+2. Run `forge-host.sh` to generate:
+    - `user-data`
+    - `meta-data`
+    - `private_key.asc`
+    - `ownertrust.txt`
+3. Prepare three USB drives:
+    - Ubuntu 26.04 installer (8 GB to 16 GB)
+    - `CIDATA` (1 GB to 8 GB)
+    - `LIFEBOAT` (8 GB to 32 GB)
+4. Copy `user-data` and `meta-data` to the `CIDATA` USB drive.
+5. Export `private_key.asc` and `ownertrust.txt` to your `LIFEBOAT` USB drive.
+6. Install the host using the Ubuntu 26.04 installer + `CIDATA` USB drives.
+7. Restore GPG trust and SSH from the `LIFEBOAT` USB drive on first host login.
+8. Create `deploy-vm.sh` and make it executable by running `chmod +x deploy-vm.sh`.
+9. Generate VM cloud-init files (`dotnet-user-data-yaml` etc ) and deploy your first VM.
+10. Verify VM health with `ssh <vm-name>`, `docker ps` and `virsh list --all`.
 
 ## Prerequisites
 
