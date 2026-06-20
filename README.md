@@ -680,6 +680,7 @@ Once you log in to your fresh host, establish your sovereignty by importing your
             - $SSH_PUB_KEY
 
       packages:
+        - npm
         - docker.io
         - docker-buildx
         - git
@@ -689,6 +690,7 @@ Once you log in to your fresh host, establish your sovereignty by importing your
         - htop
         - ncdu
         - byobu
+        - xsel
 
       runcmd:
         # 1. Adding the user to the docker group safely after package installation
