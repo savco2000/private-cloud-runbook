@@ -209,6 +209,7 @@ pass show host >/dev/null && echo "pass entry ok"
         - whois
         - usb-creator-gtk
         - paperkey
+        - wmctrl
       snaps:
         - name: code
           classic: true
