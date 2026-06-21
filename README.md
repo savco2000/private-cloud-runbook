@@ -407,42 +407,158 @@ ls -l user-data meta-data
 
 ## Phase 2: Host Personalization (Secrets & SSH Recovery)
 
-Once you log in to your fresh host, establish your sovereignty by importing your GPG private key and restore key trust mappings.
+1. Once you log in to your fresh host, establish your sovereignty by importing your GPG private key and restore key trust mappings.
 
-1. Create the Lifeboat folder
-    
-    ```bash
-    mkdir $HOME/Lifeboat
-    ```
+    - Create the Lifeboat folder
+        
+        ```bash
+        mkdir $HOME/Lifeboat
+        ```
 
-2. Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
+    - Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
 
-3. Setup SSH
+    - Setup SSH
 
-    ```bash
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
+        ```bash
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
 
-    # Import the private key
-    gpg --import $HOME/Lifeboat/private_key.asc
+        # Import the private key
+        gpg --import $HOME/Lifeboat/private_key.asc
 
-    # Restore your key trust mappings
-    gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
+        # Restore your key trust mappings
+        gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
 
-    # Clone the Password Store
-    git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
+        # Clone the Password Store
+        git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
 
-    # Extract keys directly into the standard OpenSSH paths
-    pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
-    pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
+        # Extract keys directly into the standard OpenSSH paths
+        pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
+        pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
 
-    # Lock down permissions to prevent "Bad owner or permissions" errors
-    chmod 600 "$HOME/.ssh/id_ed25519"
-    chmod 644 "$HOME/.ssh/id_ed25519.pub"
+        # Lock down permissions to prevent "Bad owner or permissions" errors
+        chmod 600 "$HOME/.ssh/id_ed25519"
+        chmod 644 "$HOME/.ssh/id_ed25519.pub"
 
-    # Optional: remove key export artifacts after successful import
-    rm -f "$HOME/Lifeboat/private_key.asc" "$HOME/Lifeboat/ownertrust.txt"
-    ```
+        # Optional: remove key export artifacts after successful import
+        rm -f "$HOME/Lifeboat/private_key.asc" "$HOME/Lifeboat/ownertrust.txt"
+        ```
+
+  2. Automate the launching and exiting of DevContainers
+
+      - Manually connect to the DevContainers using Visual Studio Code so that Visual Studio Code generates the DevContainer URIs.
+
+        ```bash
+        virsh start dotnet-vm
+        ```
+        - In Visual Studio Code, click on the "Remote Explorer" icon and click on "Connect in Current Window". 
+        - Once the remote repostory opens, it will ask you to "Reopen in DevContainer", select "Yes". Close the remote rository by clicking on "File" > "Close Remote Connection"
+
+      - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
+
+        ```bash
+        #!/bin/bash
+        # Target extraction tool for fresh host builds
+        # Make executable: chmod +x get-vs-code-uris.sh
+        # Usage: sudo ./get-vs-code-uris.sh
+
+        DB_PATH="$HOME/.config/Code/User/globalStorage/state.vscdb"
+
+        if [ ! -f "$DB_PATH" ]; then
+            echo "❌ Error: VS Code storage database not found at $DB_PATH"
+            exit 1
+        fi
+
+        echo "=========================================================="
+        echo "🎯 TARGET DEVCONTAINER URIS EXTRACTED FROM CACHE"
+        echo "=========================================================="
+        echo ""
+
+        # Extract unique instances containing the dev-container hex signature
+        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dotnet-vm" | sort -u | while read -r line; do
+            
+            # Isolate just the raw Hex string payload
+            HEX_STRING=$(echo "$line" | sed -E 's/dev-container\+([0-9a-fA-F]+)@.*/\1/')
+            
+            # Decode the hex data natively to catch the repository directory name
+            FOLDER_NAME=$(python3 -c "import json; d=bytes.fromhex('$HEX_STRING').decode('utf-8'); print(json.loads(d).get('hostPath','').split('/')[-1])" 2>/dev/null)
+            
+            # Fallback to placeholder if parsing drops out
+            if [ -z "$FOLDER_NAME" ]; then
+                FOLDER_NAME="your-project"
+            fi
+
+            # Render a clean, scannable layout
+            echo "📂 PROJECT: $FOLDER_NAME"
+            echo "🔑 Hex Key String:"
+            echo "$HEX_STRING"
+            echo ""
+            echo "📋 Ready-to-use Shell Alias (Copy-Paste into ~/.bashrc or ~/.zshrc):"
+            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dotnet-vm/workspaces/${FOLDER_NAME}\"'"
+            echo "----------------------------------------------------------"
+        done
+        ```
+      - Add these entries to your `~/.bashrc` file.
+        ```bash
+        # --- TABIRI CONTAINER ENGINE ---
+        _dev_tabiri() {
+            if ! virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 dotnet-vm is powered off. Booting KVM domain..."
+                virsh start dotnet-vm
+            fi
+
+            echo -n "⏳ Waiting for network and SSH to wake up"
+            until ssh -o ConnectTimeout=1 -o BatchMode=yes dotnet-vm true 2>/dev/null; do
+                printf "."
+                sleep 1
+            done
+            echo -e "\n🚀 VM is awake! Launching Tabiri DevContainer..."
+
+            code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dotnet-vm/workspaces/tabiri-website"
+        }
+        alias dev-tabiri=_dev_tabiri
+
+        # --- GRACEFUL ENVIRONMENT TEARDOWN ---
+        _dev_stop() {
+            echo "🛑 Initiating graceful tear-down of your remote development stack..."
+
+            # 1. Identify and gracefully close local VS Code windows matching your remote VM
+            if command -v wmctrl &> /dev/null; then
+                echo "🪟 Closing local VS Code DevContainer windows..."
+                
+                # Scan active desktop windows for your devcontainer strings and close them cleanly
+                wmctrl -l | grep -E "Dev Container|@.*dotnet-vm" | awk '{print $1}' | while read -r win_id; do
+                    wmctrl -i -c "$win_id"
+                done
+                sleep 1
+            fi
+
+            # 2. Check if the VM is running, and shut it down cleanly
+            if virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 Sending ACPI shutdown signal to dotnet-vm..."
+                virsh shutdown dotnet-vm
+
+                # 3. Wait loop until the KVM domain has fully turned off
+                echo -n "⏳ Waiting for VM to safely power down"
+                while virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; do
+                    printf "."
+                    sleep 1
+                done
+                echo -e "\n🔒 dotnet-vm has successfully shut down. Environment cold and secure."
+            else
+                echo "ℹ️ dotnet-vm is already powered off."
+            fi
+        }
+        alias dev-stop=_dev_stop
+        ```
+     - To disable Workspace Restoration in Visual Studio Code:
+        - Open the Command Palette (`Ctrl + Shift + P`).
+        - Type and select: `Preferences: Open User Settings (JSON)`.
+        - Add the following line to your settings object (make sure to include a comma on the preceding line if needed):
+
+        ```json
+        "window.restoreWindows": "none"
+        ```
 
   **Phase 2 checkpoint:**
 
