@@ -551,14 +551,14 @@ ls -l user-data meta-data
         }
         alias dev-stop=_dev_stop
         ```
-     - To disable Workspace Restoration in Visual Studio Code:
+     - To disable **Workspace Restoration** in Visual Studio Code:
         - Open the Command Palette (`Ctrl + Shift + P`).
         - Type and select: `Preferences: Open User Settings (JSON)`.
         - Add the following line to your settings object (make sure to include a comma on the preceding line if needed):
 
-        ```json
-        "window.restoreWindows": "none"
-        ```
+          ```json
+          "window.restoreWindows": "none"
+          ```
 
   **Phase 2 checkpoint:**
 
