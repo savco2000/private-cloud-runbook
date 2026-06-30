@@ -829,7 +829,7 @@ ls -l user-data meta-data
       Run the following command to create `dotnet-vm`
 
       ```bash
-      sudo ./deploy-vm.sh dotnet-vm -m 4096 -c 4 -s 40 -f
+      sudo ./deploy-vm.sh dotnet-user-data.yaml -m 4096 -c 4 -s 40 -f
       ```
 
     - SSH into `dotnet-vm`
@@ -930,7 +930,7 @@ ls -l user-data meta-data
       Run the following command to create `openclaw-vm`
 
       ```bash
-      sudo ./deploy-vm.sh openclaw-vm -m 4096 -c 4 -s 40 -f
+      sudo ./deploy-vm.sh openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
       ```
 
     - SSH into `openclaw-vm`
