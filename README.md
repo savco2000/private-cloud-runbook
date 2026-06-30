@@ -871,7 +871,7 @@ ls -l user-data meta-data
 
 2. Create the `openclaw-vm` virtual machine
 
-    - Create `openclaw-user-data.yaml` file at `~/Downloads/`
+    - Create `create-openclaw-user-data.sh` file at `~/Downloads/`
 
       ```bash
       #!/bin/bash
@@ -935,6 +935,18 @@ ls -l user-data meta-data
       EOF
 
       echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
+      ```
+
+    - Make `create-openclaw-user-data.sh` executable
+
+      ```bash
+      chmod +x create-openclaw-user-data.sh
+      ```
+
+    - Execute `create-openclaw-user-data.sh` to create `openclaw-user-data.yaml`
+
+      ```bash
+      ./create-openclaw-user-data.sh
       ```
 
     - Create the `openclaw-vm` virtual machine
