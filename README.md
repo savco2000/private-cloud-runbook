@@ -780,7 +780,7 @@ ls -l user-data meta-data
       GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
 
       SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-      USERNAME=$(pass show virtual-machine | grep "^username:" | cut -d' ' -f2-)
+      USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
 
       # 2. Generate the configuration file with variables injected directly
       # (Unquoted EOF allows Bash to inject variables directly without needing sed)
@@ -876,7 +876,7 @@ ls -l user-data meta-data
       GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
 
       SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-      USERNAME=$(pass show virtual-machine | grep "^username:" | cut -d' ' -f2-)
+      USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
 
       # 2. Generate the configuration file with variables injected
       # (Unquoted EOF allows Bash to inject variables directly without needing sed)
