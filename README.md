@@ -443,123 +443,6 @@ ls -l user-data meta-data
         # Optional: remove key export artifacts after successful import
         rm -f "$HOME/Lifeboat/private_key.asc" "$HOME/Lifeboat/ownertrust.txt"
         ```
-
-  2. Automate the launching and exiting of DevContainers
-
-      - Manually connect to the DevContainers using Visual Studio Code so that Visual Studio Code generates the DevContainer URIs.
-
-        ```bash
-        virsh start dotnet-vm
-        ```
-        - In Visual Studio Code, click on the "Remote Explorer" icon and click on "Connect in Current Window". 
-        - Once the remote repostory opens, it will ask you to "Reopen in DevContainer", select "Yes". Close the remote rository by clicking on "File" > "Close Remote Connection"
-
-      - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
-
-        ```bash
-        #!/bin/bash
-        # Target extraction tool for fresh host builds
-        # Make executable: chmod +x get-vs-code-uris.sh
-        # Usage: sudo ./get-vs-code-uris.sh
-
-        DB_PATH="$HOME/.config/Code/User/globalStorage/state.vscdb"
-
-        if [ ! -f "$DB_PATH" ]; then
-            echo "❌ Error: VS Code storage database not found at $DB_PATH"
-            exit 1
-        fi
-
-        echo "=========================================================="
-        echo "🎯 TARGET DEVCONTAINER URIS EXTRACTED FROM CACHE"
-        echo "=========================================================="
-        echo ""
-
-        # Extract unique instances containing the dev-container hex signature
-        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dotnet-vm" | sort -u | while read -r line; do
-            
-            # Isolate just the raw Hex string payload
-            HEX_STRING=$(echo "$line" | sed -E 's/dev-container\+([0-9a-fA-F]+)@.*/\1/')
-            
-            # Decode the hex data natively to catch the repository directory name
-            FOLDER_NAME=$(python3 -c "import json; d=bytes.fromhex('$HEX_STRING').decode('utf-8'); print(json.loads(d).get('hostPath','').split('/')[-1])" 2>/dev/null)
-            
-            # Fallback to placeholder if parsing drops out
-            if [ -z "$FOLDER_NAME" ]; then
-                FOLDER_NAME="your-project"
-            fi
-
-            # Render a clean, scannable layout
-            echo "📂 PROJECT: $FOLDER_NAME"
-            echo "🔑 Hex Key String:"
-            echo "$HEX_STRING"
-            echo ""
-            echo "📋 Ready-to-use Shell Alias (Copy-Paste into ~/.bashrc or ~/.zshrc):"
-            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dotnet-vm/workspaces/${FOLDER_NAME}\"'"
-            echo "----------------------------------------------------------"
-        done
-        ```
-      - Add these entries to your `~/.bashrc` file.
-        ```bash
-        # --- TABIRI CONTAINER ENGINE ---
-        _dev_tabiri() {
-            if ! virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
-                echo "🔌 dotnet-vm is powered off. Booting KVM domain..."
-                virsh start dotnet-vm
-            fi
-
-            echo -n "⏳ Waiting for network and SSH to wake up"
-            until ssh -o ConnectTimeout=1 -o BatchMode=yes dotnet-vm true 2>/dev/null; do
-                printf "."
-                sleep 1
-            done
-            echo -e "\n🚀 VM is awake! Launching Tabiri DevContainer..."
-
-            code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dotnet-vm/workspaces/tabiri-website"
-        }
-        alias dev-tabiri=_dev_tabiri
-
-        # --- GRACEFUL ENVIRONMENT TEARDOWN ---
-        _dev_stop() {
-            echo "🛑 Initiating graceful tear-down of your remote development stack..."
-
-            # 1. Identify and gracefully close local VS Code windows matching your remote VM
-            if command -v wmctrl &> /dev/null; then
-                echo "🪟 Closing local VS Code DevContainer windows..."
-                
-                # Scan active desktop windows for your devcontainer strings and close them cleanly
-                wmctrl -l | grep -E "Dev Container|@.*dotnet-vm" | awk '{print $1}' | while read -r win_id; do
-                    wmctrl -i -c "$win_id"
-                done
-                sleep 1
-            fi
-
-            # 2. Check if the VM is running, and shut it down cleanly
-            if virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
-                echo "🔌 Sending ACPI shutdown signal to dotnet-vm..."
-                virsh shutdown dotnet-vm
-
-                # 3. Wait loop until the KVM domain has fully turned off
-                echo -n "⏳ Waiting for VM to safely power down"
-                while virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; do
-                    printf "."
-                    sleep 1
-                done
-                echo -e "\n🔒 dotnet-vm has successfully shut down. Environment cold and secure."
-            else
-                echo "ℹ️ dotnet-vm is already powered off."
-            fi
-        }
-        alias dev-stop=_dev_stop
-        ```
-     - To disable **Workspace Restoration** in Visual Studio Code:
-        - Open the Command Palette (`Ctrl + Shift + P`).
-        - Type and select: `Preferences: Open User Settings (JSON)`.
-        - Add the following line to your settings object (make sure to include a comma on the preceding line if needed):
-
-          ```json
-          "window.restoreWindows": "none"
-          ```
-
   **Phase 2 checkpoint:**
 
   ```bash
@@ -761,220 +644,335 @@ ls -l user-data meta-data
 
 ### 2. Create the Virtual Machines
 
-1. Create the `dotnet-vm` virtual machine
+#### 1. Create the `dotnet-vm` virtual machine
 
-    - Create `create-dotnet-user-data.sh` at `~/Downloads/`
-
-      ```bash
-      #!/bin/bash
-      # Make executable: create-dotnet-user-data.sh
-      # Usage: ./create-dotnet-user-data.sh
-
-      # Enable strict error handling: fail fast on errors or unset variables
-      set -euo pipefail
-
-      # Dynamically set the output path to the exact directory where this script resides
-      OUTPUT_FILE="$(dirname "$0")/dotnet-user-data.yaml"
-
-      # 1. Dynamically pull identity and SSH keys from the password manager
-      # Fetch git secrets once to halve the GPG decryption overhead
-      GIT_SECRETS=$(pass show github/personal)
-      GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-      GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
-
-      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-      USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
-
-      # 2. Generate the configuration file with variables injected directly
-      # (Unquoted EOF allows Bash to inject variables directly without needing sed)
-      cat << EOF > "$OUTPUT_FILE"
-      #cloud-config
-      users:
-        - name: $USERNAME
-          groups: [sudo]
-          shell: /bin/bash
-          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo
-          lock_passwd: true # 🔒 Locks password authentication entirely
-          ssh_authorized_keys:
-            - $SSH_PUB_KEY
-
-      packages:
-        - npm
-        - docker.io
-        - docker-buildx
-        - git
-        - postgresql-client
-        - curl
-        - jq
-        - htop
-        - ncdu
-        - byobu
-        - xsel
-
-      runcmd:
-        # 1. Adding the user to the docker group safely after package installation
-        - usermod -aG docker $USERNAME
-        
-        # 2. Configuring Git identity for $USERNAME
-        - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
-        - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
-        - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
-
-        # 3. Enable Byobu auto-launch on login for $USERNAME
-        - [ sudo, -u, $USERNAME, byobu-enable ]
-      EOF
-
-      echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
-      ```
-    - Make `create-dotnet-user-data.sh` executable
-
-      ```bash
-      chmod +x create-dotnet-user-data.sh
-      ```
-
-    - Execute `create-dotnet-user-data.sh` to create `dotnet-user-data.yaml`
-
-      ```bash
-      ./create-dotnet-user-data.sh
-      ```
-
-    - Run the following command to create the `dotnet-vm` virtual machine
-
-      ```bash
-      sudo ./deploy-vm.sh dotnet-user-data.yaml -m 4096 -c 4 -s 40 -f
-      ```
-
-    - SSH into `dotnet-vm`
-
-      ```bash
-      ssh dotnet-vm
-      ```
-
-    - Verify installation
-
-      - Check Docker Permissions:
-
-        ```bash
-        docker ps
-        ```
-
-      - Check .NET 10 (via Docker):
-
-        ```bash
-        docker run --rm mcr.microsoft.com/dotnet/sdk:10.0-preview dotnet --version
-        ```
-      - Check Git Identity:
-
-        ```bash
-        git config --global -l
-        ```
-
-2. Create the `openclaw-vm` virtual machine
-
-    - Create `create-openclaw-user-data.sh` file at `~/Downloads/`
-
-      ```bash
-      #!/bin/bash
-      # Enable strict error handling: fail fast on errors or unset variables
-      set -euo pipefail
-
-      # Dynamically set the output path to the exact directory where this script resides
-      OUTPUT_FILE="$(dirname "$0")/openclaw-user-data.yaml"
-
-      # 1. Dynamically pull identity and SSH keys from the password manager
-      # Fetch git secrets once to halve the GPG decryption overhead
-      GIT_SECRETS=$(pass show github/personal)
-      GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-      GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
-
-      SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-      USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
-
-      # 2. Generate the configuration file with variables injected
-      # (Unquoted EOF allows Bash to inject variables directly without needing sed)
-      cat << EOF > "$OUTPUT_FILE"
-      #cloud-config
-      users:
-        - name: $USERNAME
-          groups: [sudo]
-          shell: /bin/bash
-          sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo access:
-          lock_passwd: true # 🔒 Locks password authentication entirely
-          ssh_authorized_keys:
-            - $SSH_PUB_KEY
-
-      packages:
-        - docker.io
-        - docker-buildx
-        - nodejs
-        - npm
-        - git
-        - curl
-        - jq
-        - tcpdump
-        - auditd
-        - byobu
-
-      runcmd:
-        # 1. Safely attach $USERNAME to docker now that the package is installed
-        - [ usermod, -aG, docker, $USERNAME ]
-        
-        # 2. System-wide global installation of the OpenClaw CLI
-        - [ npm, install, -g, openclaw@latest ]
-        
-        # 3. Provision the workspace securely using $USERNAME's explicit context
-        - [ sudo, -u, $USERNAME, mkdir, -p, /home/$USERNAME/claw-workspace ]
-
-        # 4. Configuring Git identity for $USERNAME
-        - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
-        - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
-        - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
-
-        # 5. Enable Byobu auto-launch on login for $USERNAME
-        - [ sudo, -u, $USERNAME, byobu-enable ]
-      EOF
-
-      echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
-      ```
-
-    - Make `create-openclaw-user-data.sh` executable
-
-      ```bash
-      chmod +x create-openclaw-user-data.sh
-      ```
-
-    - Execute `create-openclaw-user-data.sh` to create `openclaw-user-data.yaml`
-
-      ```bash
-      ./create-openclaw-user-data.sh
-      ```
-
-    - Create the `openclaw-vm` virtual machine
-
-      Run the following command to create `openclaw-vm`
-
-      ```bash
-      sudo ./deploy-vm.sh openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
-      ```
-
-    - SSH into `openclaw-vm`
-
-      ```bash
-      ssh openclaw-vm
-      ```
-
-    - Verify installation
-      - Run `openclaw gateway start`
-      - Open an SSH tunnel from your host: `ssh -L 18789:localhost:18789 openclaw-vm`
-      - Access the UI at `http://localhost:18789`
-      - Before running a risky AI experiment, freeze the target image: `virsh snapshot-create-as openclaw-vm pre-experiment`
-
-    Phase 3 checkpoint:
+  - Create `create-dotnet-user-data.sh` at `~/Downloads/`
 
     ```bash
-    virsh list --all
-    ssh dotnet-vm "cloud-init status"
+    #!/bin/bash
+    # Make executable: create-dotnet-user-data.sh
+    # Usage: ./create-dotnet-user-data.sh
+
+    # Enable strict error handling: fail fast on errors or unset variables
+    set -euo pipefail
+
+    # Dynamically set the output path to the exact directory where this script resides
+    OUTPUT_FILE="$(dirname "$0")/dotnet-user-data.yaml"
+
+    # 1. Dynamically pull identity and SSH keys from the password manager
+    # Fetch git secrets once to halve the GPG decryption overhead
+    GIT_SECRETS=$(pass show github/personal)
+    GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+    GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
+
+    SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+    USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
+
+    # 2. Generate the configuration file with variables injected directly
+    # (Unquoted EOF allows Bash to inject variables directly without needing sed)
+    cat << EOF > "$OUTPUT_FILE"
+    #cloud-config
+    users:
+      - name: $USERNAME
+        groups: [sudo]
+        shell: /bin/bash
+        sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo
+        lock_passwd: true # 🔒 Locks password authentication entirely
+        ssh_authorized_keys:
+          - $SSH_PUB_KEY
+
+    packages:
+      - npm
+      - docker.io
+      - docker-buildx
+      - git
+      - postgresql-client
+      - curl
+      - jq
+      - htop
+      - ncdu
+      - byobu
+      - xsel
+
+    runcmd:
+      # 1. Adding the user to the docker group safely after package installation
+      - usermod -aG docker $USERNAME
+      
+      # 2. Configuring Git identity for $USERNAME
+      - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
+      - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
+      - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
+
+      # 3. Enable Byobu auto-launch on login for $USERNAME
+      - [ sudo, -u, $USERNAME, byobu-enable ]
+    EOF
+
+    echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
     ```
+  - Make `create-dotnet-user-data.sh` executable
+
+    ```bash
+    chmod +x create-dotnet-user-data.sh
+    ```
+
+  - Execute `create-dotnet-user-data.sh` to create `dotnet-user-data.yaml`
+
+    ```bash
+    ./create-dotnet-user-data.sh
+    ```
+
+  - Run the following command to create the `dotnet-vm` virtual machine
+
+    ```bash
+    sudo ./deploy-vm.sh dotnet-user-data.yaml -m 4096 -c 4 -s 40 -f
+    ```
+
+  - SSH into `dotnet-vm`
+
+    ```bash
+    ssh dotnet-vm
+    ```
+
+  - Verify installation
+
+    - Check Docker Permissions:
+
+      ```bash
+      docker ps
+      ```
+
+    - Check .NET 10 (via Docker):
+
+      ```bash
+      docker run --rm mcr.microsoft.com/dotnet/sdk:10.0-preview dotnet --version
+      ```
+    - Check Git Identity:
+
+      ```bash
+      git config --global -l
+      ```
+    - Automate the launching and exiting of DevContainers
+
+      - Manually connect to the DevContainers using Visual Studio Code so that Visual Studio Code generates the DevContainer URIs.
+
+        ```bash
+        virsh start dotnet-vm
+        ```
+        - In Visual Studio Code, click on the "Remote Explorer" icon and click on "Connect in Current Window". 
+        - Once the remote repostory opens, it will ask you to "Reopen in DevContainer", select "Yes". Close the remote rository by clicking on "File" > "Close Remote Connection"
+
+      - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
+
+        ```bash
+        #!/bin/bash
+        # Target extraction tool for fresh host builds
+        # Make executable: chmod +x get-vs-code-uris.sh
+        # Usage: sudo ./get-vs-code-uris.sh
+
+        DB_PATH="$HOME/.config/Code/User/globalStorage/state.vscdb"
+
+        if [ ! -f "$DB_PATH" ]; then
+            echo "❌ Error: VS Code storage database not found at $DB_PATH"
+            exit 1
+        fi
+
+        echo "=========================================================="
+        echo "🎯 TARGET DEVCONTAINER URIS EXTRACTED FROM CACHE"
+        echo "=========================================================="
+        echo ""
+
+        # Extract unique instances containing the dev-container hex signature
+        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dotnet-vm" | sort -u | while read -r line; do
+            
+            # Isolate just the raw Hex string payload
+            HEX_STRING=$(echo "$line" | sed -E 's/dev-container\+([0-9a-fA-F]+)@.*/\1/')
+            
+            # Decode the hex data natively to catch the repository directory name
+            FOLDER_NAME=$(python3 -c "import json; d=bytes.fromhex('$HEX_STRING').decode('utf-8'); print(json.loads(d).get('hostPath','').split('/')[-1])" 2>/dev/null)
+            
+            # Fallback to placeholder if parsing drops out
+            if [ -z "$FOLDER_NAME" ]; then
+                FOLDER_NAME="your-project"
+            fi
+
+            # Render a clean, scannable layout
+            echo "📂 PROJECT: $FOLDER_NAME"
+            echo "🔑 Hex Key String:"
+            echo "$HEX_STRING"
+            echo ""
+            echo "📋 Ready-to-use Shell Alias (Copy-Paste into ~/.bashrc or ~/.zshrc):"
+            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dotnet-vm/workspaces/${FOLDER_NAME}\"'"
+            echo "----------------------------------------------------------"
+        done
+        ```
+      - Add these entries to your `~/.bashrc` file.
+        ```bash
+        # --- TABIRI CONTAINER ENGINE ---
+        _dev_tabiri() {
+            if ! virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 dotnet-vm is powered off. Booting KVM domain..."
+                virsh start dotnet-vm
+            fi
+
+            echo -n "⏳ Waiting for network and SSH to wake up"
+            until ssh -o ConnectTimeout=1 -o BatchMode=yes dotnet-vm true 2>/dev/null; do
+                printf "."
+                sleep 1
+            done
+            echo -e "\n🚀 VM is awake! Launching Tabiri DevContainer..."
+
+            code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dotnet-vm/workspaces/tabiri-website"
+        }
+        alias dev-tabiri=_dev_tabiri
+
+        # --- GRACEFUL ENVIRONMENT TEARDOWN ---
+        _dev_stop() {
+            echo "🛑 Initiating graceful tear-down of your remote development stack..."
+
+            # 1. Identify and gracefully close local VS Code windows matching your remote VM
+            if command -v wmctrl &> /dev/null; then
+                echo "🪟 Closing local VS Code DevContainer windows..."
+                
+                # Scan active desktop windows for your devcontainer strings and close them cleanly
+                wmctrl -l | grep -E "Dev Container|@.*dotnet-vm" | awk '{print $1}' | while read -r win_id; do
+                    wmctrl -i -c "$win_id"
+                done
+                sleep 1
+            fi
+
+            # 2. Check if the VM is running, and shut it down cleanly
+            if virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 Sending ACPI shutdown signal to dotnet-vm..."
+                virsh shutdown dotnet-vm
+
+                # 3. Wait loop until the KVM domain has fully turned off
+                echo -n "⏳ Waiting for VM to safely power down"
+                while virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; do
+                    printf "."
+                    sleep 1
+                done
+                echo -e "\n🔒 dotnet-vm has successfully shut down. Environment cold and secure."
+            else
+                echo "ℹ️ dotnet-vm is already powered off."
+            fi
+        }
+        alias dev-stop=_dev_stop
+        ```
+    - To disable **Workspace Restoration** in Visual Studio Code:
+        - Open the Command Palette (`Ctrl + Shift + P`).
+        - Type and select: `Preferences: Open User Settings (JSON)`.
+        - Add the following line to your settings object (make sure to include a comma on the preceding line if needed):
+
+          ```json
+          "window.restoreWindows": "none"
+          ```
+
+#### 2. Create the `openclaw-vm` virtual machine
+
+  - Create `create-openclaw-user-data.sh` file at `~/Downloads/`
+
+    ```bash
+    #!/bin/bash
+    # Enable strict error handling: fail fast on errors or unset variables
+    set -euo pipefail
+
+    # Dynamically set the output path to the exact directory where this script resides
+    OUTPUT_FILE="$(dirname "$0")/openclaw-user-data.yaml"
+
+    # 1. Dynamically pull identity and SSH keys from the password manager
+    # Fetch git secrets once to halve the GPG decryption overhead
+    GIT_SECRETS=$(pass show github/personal)
+    GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
+    GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
+
+    SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
+    USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
+
+    # 2. Generate the configuration file with variables injected
+    # (Unquoted EOF allows Bash to inject variables directly without needing sed)
+    cat << EOF > "$OUTPUT_FILE"
+    #cloud-config
+    users:
+      - name: $USERNAME
+        groups: [sudo]
+        shell: /bin/bash
+        sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo access:
+        lock_passwd: true # 🔒 Locks password authentication entirely
+        ssh_authorized_keys:
+          - $SSH_PUB_KEY
+
+    packages:
+      - docker.io
+      - docker-buildx
+      - nodejs
+      - npm
+      - git
+      - curl
+      - jq
+      - tcpdump
+      - auditd
+      - byobu
+
+    runcmd:
+      # 1. Safely attach $USERNAME to docker now that the package is installed
+      - [ usermod, -aG, docker, $USERNAME ]
+      
+      # 2. System-wide global installation of the OpenClaw CLI
+      - [ npm, install, -g, openclaw@latest ]
+      
+      # 3. Provision the workspace securely using $USERNAME's explicit context
+      - [ sudo, -u, $USERNAME, mkdir, -p, /home/$USERNAME/claw-workspace ]
+
+      # 4. Configuring Git identity for $USERNAME
+      - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
+      - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
+      - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
+
+      # 5. Enable Byobu auto-launch on login for $USERNAME
+      - [ sudo, -u, $USERNAME, byobu-enable ]
+    EOF
+
+    echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
+    ```
+
+  - Make `create-openclaw-user-data.sh` executable
+
+    ```bash
+    chmod +x create-openclaw-user-data.sh
+    ```
+
+  - Execute `create-openclaw-user-data.sh` to create `openclaw-user-data.yaml`
+
+    ```bash
+    ./create-openclaw-user-data.sh
+    ```
+
+  - Create the `openclaw-vm` virtual machine
+
+    Run the following command to create `openclaw-vm`
+
+    ```bash
+    sudo ./deploy-vm.sh openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
+    ```
+
+  - SSH into `openclaw-vm`
+
+    ```bash
+    ssh openclaw-vm
+    ```
+
+  - Verify installation
+    - Run `openclaw gateway start`
+    - Open an SSH tunnel from your host: `ssh -L 18789:localhost:18789 openclaw-vm`
+    - Access the UI at `http://localhost:18789`
+    - Before running a risky AI experiment, freeze the target image: `virsh snapshot-create-as openclaw-vm pre-experiment`
+
+  Phase 3 checkpoint:
+
+  ```bash
+  virsh list --all
+  ssh dotnet-vm "cloud-init status"
+  ```
 
 ## Phase 4: Managing Host and Virtual Machines
 
