@@ -763,10 +763,13 @@ ls -l user-data meta-data
 
 1. Create the `dotnet-vm` virtual machine
 
-    - Create `dotnet-user-data.yaml` at `~/Downloads/`
+    - Create `create-dotnet-user-data.sh` at `~/Downloads/`
 
       ```bash
       #!/bin/bash
+      # Make executable: create-dotnet-user-data.sh
+      # Usage: ./create-dotnet-user-data.sh
+
       # Enable strict error handling: fail fast on errors or unset variables
       set -euo pipefail
 
@@ -823,10 +826,19 @@ ls -l user-data meta-data
 
       echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
       ```
+    - Make `create-dotnet-user-data.sh` executable
 
-    - Create the `dotnet-vm` virtual machine
+      ```bash
+      chmod +x create-dotnet-user-data.sh
+      ```
 
-      Run the following command to create `dotnet-vm`
+    - Execute `create-dotnet-user-data.sh` to create `dotnet-user-data.yaml`
+
+      ```bash
+      ./create-dotnet-user-data.sh
+      ```
+
+    - Run the following command to create the `dotnet-vm` virtual machine
 
       ```bash
       sudo ./deploy-vm.sh dotnet-user-data.yaml -m 4096 -c 4 -s 40 -f
