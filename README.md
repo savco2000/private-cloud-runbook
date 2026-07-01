@@ -417,12 +417,24 @@ ls -l user-data meta-data
 
     - Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
 
-    - Setup SSH
+    - Set up SSH
+      ```bash
+      chmod 700 $HOME/.ssh
+
+      # Extract keys directly into the standard OpenSSH paths
+      mv $HOME/Lifeboat/id_ed25519* $HOME/.ssh/
+
+      # Lock down permissions to prevent "Bad owner or permissions" errors
+      chmod 600 $HOME/.ssh/id_ed25519
+      chmod 644 $HOME/.ssh/id_ed25519.pub
+
+      # Optional: remove key export artifacts after successful import
+      rm -r $HOME/Lifeboat
+      ```
+
+    - Setup Password Store
 
         ```bash
-        mkdir -p "$HOME/.ssh"
-        chmod 700 "$HOME/.ssh"
-
         # Explicitly bind your terminal window to the GPG subsystem
         export GPG_TTY=$(tty)
 
@@ -434,17 +446,6 @@ ls -l user-data meta-data
 
         # Clone the Password Store
         git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
-
-        # Extract keys directly into the standard OpenSSH paths
-        pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
-        pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
-
-        # Lock down permissions to prevent "Bad owner or permissions" errors
-        chmod 600 "$HOME/.ssh/id_ed25519"
-        chmod 644 "$HOME/.ssh/id_ed25519.pub"
-
-        # Optional: remove key export artifacts after successful import
-        rm -f "$HOME/Lifeboat/private_key.asc" "$HOME/Lifeboat/ownertrust.txt"
         ```
   **Phase 2 checkpoint:**
 
