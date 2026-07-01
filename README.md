@@ -744,12 +744,6 @@ ls -l user-data meta-data
       ```bash
       docker ps
       ```
-
-    - Check .NET 10 (via Docker):
-
-      ```bash
-      docker run --rm mcr.microsoft.com/dotnet/sdk:10.0-preview dotnet --version
-      ```
     - Check Git Identity:
 
       ```bash
