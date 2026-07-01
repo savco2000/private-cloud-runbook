@@ -31,7 +31,7 @@ Use this if you want the fastest successful path without reading every detail fi
 6. Install the host using the Ubuntu 26.04 installer + `CIDATA` USB drives.
 7. Restore GPG trust and SSH from the `LIFEBOAT` USB drive on first host login.
 8. Create `deploy-vm.sh` and make it executable by running `chmod +x deploy-vm.sh`.
-9. Generate VM cloud-init files (`dotnet-user-data-yaml` etc ) and deploy your first VM.
+9. Generate VM cloud-init files (`dev-user-data-yaml` etc ) and deploy your first VM.
 10. Verify VM health with `ssh <vm-name>`, `docker ps` and `virsh list --all`.
 
 ## Prerequisites
@@ -648,20 +648,20 @@ ls -l user-data meta-data
 
 ### 2. Create the Virtual Machines
 
-#### 1. Create the `dotnet-vm` virtual machine
+#### 1. Create the `dev-vm` virtual machine
 
-  - Create `create-dotnet-user-data.sh` at `~/Downloads/`
+  - Create `create-dev-user-data.sh` at `~/Downloads/`
 
     ```bash
     #!/bin/bash
-    # Make executable: create-dotnet-user-data.sh
-    # Usage: ./create-dotnet-user-data.sh
+    # Make executable: create-dev-user-data.sh
+    # Usage: ./create-dev-user-data.sh
 
     # Enable strict error handling: fail fast on errors or unset variables
     set -euo pipefail
 
     # Dynamically set the output path to the exact directory where this script resides
-    OUTPUT_FILE="$(dirname "$0")/dotnet-user-data.yaml"
+    OUTPUT_FILE="$(dirname "$0")/dev-user-data.yaml"
 
     # 1. Dynamically pull identity and SSH keys from the password manager
     # Fetch git secrets once to halve the GPG decryption overhead
@@ -713,28 +713,28 @@ ls -l user-data meta-data
 
     echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
     ```
-  - Make `create-dotnet-user-data.sh` executable
+  - Make `create-dev-user-data.sh` executable
 
     ```bash
-    chmod +x create-dotnet-user-data.sh
+    chmod +x create-dev-user-data.sh
     ```
 
-  - Execute `create-dotnet-user-data.sh` to create `dotnet-user-data.yaml`
+  - Execute `create-dev-user-data.sh` to create `dev-user-data.yaml`
 
     ```bash
-    ./create-dotnet-user-data.sh
+    ./create-dev-user-data.sh
     ```
 
-  - Run the following command to create the `dotnet-vm` virtual machine
+  - Run the following command to create the `dev-vm` virtual machine
 
     ```bash
-    sudo ./deploy-vm.sh dotnet-user-data.yaml -m 4096 -c 4 -s 40 -f
+    sudo ./deploy-vm.sh dev-user-data.yaml -m 4096 -c 4 -s 40 -f
     ```
 
-  - SSH into `dotnet-vm`
+  - SSH into `dev-vm`
 
     ```bash
-    ssh dotnet-vm
+    ssh dev-vm
     ```
 
   - Verify installation
@@ -760,7 +760,7 @@ ls -l user-data meta-data
       - Manually connect to the DevContainers using Visual Studio Code so that Visual Studio Code generates the DevContainer URIs.
 
         ```bash
-        virsh start dotnet-vm
+        virsh start dev-vm
         ```
         - In Visual Studio Code, click on the "Remote Explorer" icon and click on "Connect in Current Window". 
         - Once the remote repostory opens, it will ask you to "Reopen in DevContainer", select "Yes". Close the remote rository by clicking on "File" > "Close Remote Connection"
@@ -786,7 +786,7 @@ ls -l user-data meta-data
         echo ""
 
         # Extract unique instances containing the dev-container hex signature
-        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dotnet-vm" | sort -u | while read -r line; do
+        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dev-vm" | sort -u | while read -r line; do
             
             # Isolate just the raw Hex string payload
             HEX_STRING=$(echo "$line" | sed -E 's/dev-container\+([0-9a-fA-F]+)@.*/\1/')
@@ -805,7 +805,7 @@ ls -l user-data meta-data
             echo "$HEX_STRING"
             echo ""
             echo "📋 Ready-to-use Shell Alias (Copy-Paste into ~/.bashrc or ~/.zshrc):"
-            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dotnet-vm/workspaces/${FOLDER_NAME}\"'"
+            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dev-vm/workspaces/${FOLDER_NAME}\"'"
             echo "----------------------------------------------------------"
         done
         ```
@@ -813,19 +813,19 @@ ls -l user-data meta-data
         ```bash
         # --- TABIRI CONTAINER ENGINE ---
         _dev_tabiri() {
-            if ! virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
-                echo "🔌 dotnet-vm is powered off. Booting KVM domain..."
-                virsh start dotnet-vm
+            if ! virsh domstate dev-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 dev-vm is powered off. Booting KVM domain..."
+                virsh start dev-vm
             fi
 
             echo -n "⏳ Waiting for network and SSH to wake up"
-            until ssh -o ConnectTimeout=1 -o BatchMode=yes dotnet-vm true 2>/dev/null; do
+            until ssh -o ConnectTimeout=1 -o BatchMode=yes dev-vm true 2>/dev/null; do
                 printf "."
                 sleep 1
             done
             echo -e "\n🚀 VM is awake! Launching Tabiri DevContainer..."
 
-            code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dotnet-vm/workspaces/tabiri-website"
+            code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dev-vm/workspaces/tabiri-website"
         }
         alias dev-tabiri=_dev_tabiri
 
@@ -838,26 +838,26 @@ ls -l user-data meta-data
                 echo "🪟 Closing local VS Code DevContainer windows..."
                 
                 # Scan active desktop windows for your devcontainer strings and close them cleanly
-                wmctrl -l | grep -E "Dev Container|@.*dotnet-vm" | awk '{print $1}' | while read -r win_id; do
+                wmctrl -l | grep -E "Dev Container|@.*dev-vm" | awk '{print $1}' | while read -r win_id; do
                     wmctrl -i -c "$win_id"
                 done
                 sleep 1
             fi
 
             # 2. Check if the VM is running, and shut it down cleanly
-            if virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; then
-                echo "🔌 Sending ACPI shutdown signal to dotnet-vm..."
-                virsh shutdown dotnet-vm
+            if virsh domstate dev-vm 2>/dev/null | grep -q "running"; then
+                echo "🔌 Sending ACPI shutdown signal to dev-vm..."
+                virsh shutdown dev-vm
 
                 # 3. Wait loop until the KVM domain has fully turned off
                 echo -n "⏳ Waiting for VM to safely power down"
-                while virsh domstate dotnet-vm 2>/dev/null | grep -q "running"; do
+                while virsh domstate dev-vm 2>/dev/null | grep -q "running"; do
                     printf "."
                     sleep 1
                 done
-                echo -e "\n🔒 dotnet-vm has successfully shut down. Environment cold and secure."
+                echo -e "\n🔒 dev-vm has successfully shut down. Environment cold and secure."
             else
-                echo "ℹ️ dotnet-vm is already powered off."
+                echo "ℹ️ dev-vm is already powered off."
             fi
         }
         alias dev-stop=_dev_stop
@@ -975,7 +975,7 @@ ls -l user-data meta-data
 
   ```bash
   virsh list --all
-  ssh dotnet-vm "cloud-init status"
+  ssh dev-vm "cloud-init status"
   ```
 
 ## Phase 4: Managing Host and Virtual Machines
@@ -1010,7 +1010,7 @@ To power on a virtual machine that is currently shut down:
 
 ```bash
 virsh start <vm-name>
-# Example: virsh start dotnet-vm
+# Example: virsh start dev-vm
 ```
 
 ### 4. Stopping a VM
@@ -1031,7 +1031,7 @@ There are two ways to turn off a VM, depending on whether you want a polite requ
 
   ```bash
   virsh destroy <vm-name>
-  # Example: virsh destroy dotnet-vm
+  # Example: virsh destroy dev-vm
   ```
 
 ### 5. Creating a Snapshot of a VM
