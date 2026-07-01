@@ -423,8 +423,11 @@ ls -l user-data meta-data
         mkdir -p "$HOME/.ssh"
         chmod 700 "$HOME/.ssh"
 
-        # Import the private key
-        gpg --import $HOME/Lifeboat/private_key.asc
+        # Explicitly bind your terminal window to the GPG subsystem
+        export GPG_TTY=$(tty)
+
+        # Execute the import command while forcing loopback mode
+        gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
 
         # Restore your key trust mappings
         gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
