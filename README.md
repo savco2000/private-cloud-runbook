@@ -441,6 +441,9 @@ ls -l user-data meta-data
       # Restore your key trust mappings
       gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
 
+      # Scan and save the GitHub SSH key
+      ssh-keyscan github.com >> ~/.ssh/known_hosts
+
       # Clone the Password Store
       git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
       ```
