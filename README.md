@@ -459,6 +459,7 @@ ls -l user-data meta-data
   ssh -T git@github.com
 
   # Check connection to Password Store
+  # Choose "Save in Password Manager" if prompted
   pass show ssh/public-key >/dev/null && echo "pass recovered"  
   ```
 
