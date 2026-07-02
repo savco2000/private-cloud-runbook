@@ -452,8 +452,11 @@ ls -l user-data meta-data
   **Phase 2 checkpoint:**
 
   ```bash
-  pass show ssh/public-key >/dev/null && echo "pass recovered"
+  # Check SSH connection to GitHub
   ssh -T git@github.com
+
+  # Check connection to Password Store
+  pass show ssh/public-key >/dev/null && echo "pass recovered"  
   ```
 
 ## Phase 3: The Virtual Lab
