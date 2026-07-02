@@ -721,6 +721,10 @@ ls -l user-data meta-data
 
       # 4. Pre-seed GitHub SSH keys to prevent interactive authenticity prompts for $USERNAME
       - [ sudo, -u, $USERNAME, bash, -c, 'ssh-keyscan github.com >> ~/.ssh/known_hosts' ]
+
+      # 5. Automatically clone core repositories into the user's home directory
+      - [ sudo, -u, $USERNAME, bash, -c, 'cd /home/$USERNAME && git clone git@github.com:savco2000/private-cloud-runbook.git' ]
+      - [ sudo, -u, $USERNAME, bash, -c, 'cd /home/$USERNAME && git clone git@github.com:savco2000/tabiri-website.git' ]
     EOF
 
     echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
