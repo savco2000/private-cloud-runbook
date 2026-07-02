@@ -427,26 +427,28 @@ ls -l user-data meta-data
       # Lock down permissions to prevent "Bad owner or permissions" errors
       chmod 600 $HOME/.ssh/id_ed25519
       chmod 644 $HOME/.ssh/id_ed25519.pub
-
-      # Optional: remove key export artifacts after successful import
-      rm -r $HOME/Lifeboat
       ```
 
     - Setup Password Store
 
-        ```bash
-        # Explicitly bind your terminal window to the GPG subsystem
-        export GPG_TTY=$(tty)
+      ```bash
+      # Explicitly bind your terminal window to the GPG subsystem
+      export GPG_TTY=$(tty)
 
-        # Execute the import command while forcing loopback mode
-        gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
+      # Execute the import command while forcing loopback mode
+      gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
 
-        # Restore your key trust mappings
-        gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
+      # Restore your key trust mappings
+      gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
 
-        # Clone the Password Store
-        git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
-        ```
+      # Clone the Password Store
+      git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
+      ```
+
+    - Clean up Lifeboat files
+      ```bash
+      rm -r $HOME/Lifeboat
+      ```
   **Phase 2 checkpoint:**
 
   ```bash
