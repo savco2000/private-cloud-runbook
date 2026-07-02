@@ -718,6 +718,9 @@ ls -l user-data meta-data
 
       # 3. Enable Byobu auto-launch on login for $USERNAME
       - [ sudo, -u, $USERNAME, byobu-enable ]
+
+      # 4. Pre-seed GitHub SSH keys to prevent interactive authenticity prompts for $USERNAME
+      - [ sudo, -u, $USERNAME, bash, -c, 'ssh-keyscan github.com >> ~/.ssh/known_hosts' ]
     EOF
 
     echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
@@ -937,6 +940,9 @@ ls -l user-data meta-data
 
       # 5. Enable Byobu auto-launch on login for $USERNAME
       - [ sudo, -u, $USERNAME, byobu-enable ]
+
+      # 6. Pre-seed GitHub SSH keys to prevent interactive authenticity prompts for $USERNAME
+      - [ sudo, -u, $USERNAME, bash, -c, 'ssh-keyscan github.com >> ~/.ssh/known_hosts' ]
     EOF
 
     echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
