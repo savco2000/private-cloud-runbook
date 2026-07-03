@@ -65,275 +65,39 @@ pass show host >/dev/null && echo "pass entry ok"
 
 ## Phase 0: The "Off-Laptop" Preparation
 
-1. Create and run `forge-host.sh` which:
-    - Creates the host's user-data and meta-data files in the same directory `forge-host.sh` is run from
-    - Optionally rotates the host's password in `pass`
-    - Optionally rotates the SSH keys in `pass`
+1. Clone `dofiles` into `$HOME` directory if it doesn't already exist.
 
     ```bash
-    #!/bin/bash
-    # Enable strict error handling: fail fast on errors or unset variables
-    set -euo pipefail
-
-    # Define a single source of truth for the output paths
-    OUTPUT_FILE="$(dirname "$0")/user-data"
-    META_DATA_FILE="$(dirname "$OUTPUT_FILE")/meta-data"
-
-    mkdir -p "$(dirname "$OUTPUT_FILE")"
-    touch "$META_DATA_FILE" # Ensure the empty meta-data file exists
-
-    # --- 1. Optional Password Rotation ---
-    echo "------------------------------------------------"
-    read -p "🔄 Do you want to rotate the host password before generating? (y/N): " ROTATE_PWD
-    if [[ "$ROTATE_PWD" =~ ^[Yy]$ ]]; then
-        read -s -p "   Enter new plaintext password: " RAW_PWD
-        echo ""
-        read -s -p "   Confirm new plaintext password: " RAW_PWD_CONFIRM
-        echo ""
-        
-        if [ "$RAW_PWD" != "$RAW_PWD_CONFIRM" ]; then
-            echo "❌ Passwords do not match! Exiting script."
-            exit 1
-        fi
-        
-        echo "⚙️  Hashing password and updating 'host' entry in pass..."
-        NEW_HASH=$(echo "$RAW_PWD" | mkpasswd -m sha-512 -s)
-        
-        # Pull the existing record, replace line 1 (plaintext), and replace the hashed-password line
-        EXISTING_SECRETS=$(pass show host)
-        UPDATED_SECRETS=$(echo "$EXISTING_SECRETS" | sed "1s|.*|$RAW_PWD|" | sed "s|^hashed-password:.*|hashed-password: $NEW_HASH|")
-        
-        # Pipe it back into pass (-f forces overwrite without prompting)
-        echo "$UPDATED_SECRETS" | pass insert -f -m host > /dev/null
-        
-        echo "✅ Password successfully rotated and saved to your vault!"
-    fi
-
-    # --- 2. Optional SSH Key Rotation ---
-    echo "------------------------------------------------"
-    read -p "🔑 Do you want to rotate the SSH key pair? (y/N): " ROTATE_SSH
-    if [[ "$ROTATE_SSH" =~ ^[Yy]$ ]]; then
-        read -s -p "   Enter passphrase for new SSH key (leave blank for none): " SSH_PASS
-        echo ""
-        
-        echo "⚙️  Generating new ed25519 SSH key pair..."
-        # Create a secure temporary directory that only your user can access
-        TEMP_SSH_DIR=$(mktemp -d)
-        
-        # Generate the key pair silently
-        ssh-keygen -t ed25519 -f "$TEMP_SSH_DIR/id_ed25519" -N "$SSH_PASS" -C "devuser@ubuntu-host" -q
-        
-        # Read the newly generated keys
-        NEW_PUB_KEY=$(cat "$TEMP_SSH_DIR/id_ed25519.pub")
-        NEW_PRIV_KEY=$(cat "$TEMP_SSH_DIR/id_ed25519")
-        
-        echo "⚙️  Updating SSH keys in pass..."
-        # Inject the keys into the password manager using the multiline (-m) flag
-        echo "$NEW_PUB_KEY" | pass insert -f -m ssh/public-key > /dev/null
-        echo "$NEW_PRIV_KEY" | pass insert -f -m ssh/private-key > /dev/null
-        
-        # Securely remove the temporary directory and its contents
-        rm -rf "$TEMP_SSH_DIR"
-        echo "✅ SSH keys successfully rotated and saved to your vault!"
-        
-        echo "⚠️  NOTE: Because you rotated your key, you MUST upload your new public key to GitHub!"
-    fi
-    echo "------------------------------------------------"
-
-    # --- 3. Stage Local SSH Environment ---
-    echo "⚙️  Staging local SSH keys for immediate use..."
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
-
-    # Extract keys directly into the standard OpenSSH paths
-    pass show ssh/private-key > "$HOME/.ssh/id_ed25519"
-    pass show ssh/public-key > "$HOME/.ssh/id_ed25519.pub"
-
-    # Lock down permissions to prevent "Bad owner or permissions" errors
-    chmod 600 "$HOME/.ssh/id_ed25519"
-    chmod 644 "$HOME/.ssh/id_ed25519.pub"
-    echo "✅ SSH keys are staged and ready in ~/.ssh/"
-    echo "------------------------------------------------"
-
-    # --- 4. Dynamically pull identity and SSH keys ---
-    # Fetch the host secrets exactly once to save GPG decryption overhead
-    HOST_SECRETS=$(pass show host)
-    GIT_SECRETS=$(pass show github/personal)
-
-    SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-    HASHED_PASSWORD=$(echo "$HOST_SECRETS" | grep "^hashed-password:" | cut -d' ' -f2)
-    REAL_NAME=$(echo "$HOST_SECRETS" | grep "^realname:" | cut -d' ' -f2-)
-    HOST_NAME=$(echo "$HOST_SECRETS" | grep "^hostname:" | cut -d' ' -f2-)
-    USERNAME=$(echo "$HOST_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-    GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-    GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
-
-    # --- 5. Generate the configuration file with safe placeholders ---
-    cat << 'OUTER_EOF' > "$OUTPUT_FILE"
-    #cloud-config
-    autoinstall:
-      version: 1
-      locale: en_US.UTF-8
-      keyboard: {layout: us}
-      timezone: America/New_York
-      identity:
-        hostname: __HOST_NAME_PLACEHOLDER__
-        realname: __REAL_NAME_PLACEHOLDER__
-        username: __USERNAME_PLACEHOLDER__
-        password: __HASHED_PASSWORD_PLACEHOLDER__
-      ssh:
-        install-server: true
-        authorized-keys:
-          - __SSH_PUB_KEY_PLACEHOLDER__ 
-      storage:
-        layout:
-          name: direct
-          match:
-            path: /dev/nvme0n1
-      packages:
-        - qemu-system-x86
-        - qemu-utils
-        - cloud-image-utils
-        - libvirt-daemon-system
-        - libvirt-clients
-        - virt-manager
-        - gimp
-        - tlp
-        - gnupg2
-        - pass
-        - stow
-        - pinentry-gnome3
-        - xclip
-        - curl
-        - jq
-        - whois
-        - usb-creator-gtk
-        - paperkey
-        - wmctrl
-      snaps:
-        - name: code
-          classic: true
-        - name: slack
-          classic: true
-        - name: zoom-client
-      late-commands:
-        - curtin in-target -- wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb
-        - curtin in-target -- apt-get install -y /tmp/chrome.deb
-      user-data:
-        runcmd:
-          # 1. Remove Firefox now that the system is live
-          - snap remove --purge firefox
-
-          # 2. SET SYSTEM-WIDE DESKTOP DEFAULTS VIA DCONF
-          - |
-            mkdir -p /etc/dconf/db/local.d/
-            cat <<EOF > /etc/dconf/db/local.d/00-sovereign-desktop
-            [org/gnome/shell]
-            favorite-apps=['google-chrome.desktop', 'code_code.desktop', 'org.gnome.Ptyxis.desktop', 'slack_slack.desktop', 'zoom-client_zoom-client.desktop', 'virt-manager.desktop', 'org.gnome.Nautilus.desktop']
-
-            [org/gnome/shell/extensions/dash-to-dock]
-            show-trash=true
-            trash-at-the-end=true
-
-            [org/gnome/desktop/interface]
-            color-scheme='prefer-dark'
-            EOF
-            
-            mkdir -p /etc/dconf/profile/
-            cat <<EOF > /etc/dconf/profile/user
-            user-db:user
-            system-db:local
-            EOF
-            
-            dconf update
-
-          # 3. DISABLE GNOME INITIAL SETUP (The "Welcome" Screen & Popup Fix)
-          - |
-            sed -i '/\[daemon\]/a InitialSetupEnable=false' /etc/gdm3/custom.conf
-            for dir in /etc/skel /home/__USERNAME_PLACEHOLDER__; do
-              mkdir -p "$dir/.config"
-              echo "yes" > "$dir/.config/gnome-initial-setup-done"
-            done
-            chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.config 2>/dev/null || true
-            apt-get purge -y gnome-initial-setup
-
-          # 4. Modular SSH Configuration Setup for __USERNAME_PLACEHOLDER__
-          - |
-            mkdir -p /home/__USERNAME_PLACEHOLDER__/.ssh/conf.d
-            touch /home/__USERNAME_PLACEHOLDER__/.ssh/config
-            if ! grep -q "^Include conf.d/\*" /home/__USERNAME_PLACEHOLDER__/.ssh/config; then
-              printf "Include conf.d/*\n%s" "$(cat /home/__USERNAME_PLACEHOLDER__/.ssh/config)" > /home/__USERNAME_PLACEHOLDER__/.ssh/config
-            fi
-            chown -R __USERNAME_PLACEHOLDER__:__USERNAME_PLACEHOLDER__ /home/__USERNAME_PLACEHOLDER__/.ssh
-            chmod 700 /home/__USERNAME_PLACEHOLDER__/.ssh
-            chmod 600 /home/__USERNAME_PLACEHOLDER__/.ssh/config
-
-          # 5. Install VS Code Extensions
-          - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-ssh
-          - sudo -u __USERNAME_PLACEHOLDER__ code --install-extension ms-vscode-remote.remote-containers
-
-          # 6. Configure Git for __USERNAME_PLACEHOLDER__ context
-          - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.name, "__GIT_NAME_PLACEHOLDER__" ]
-          - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, user.email, "__GIT_EMAIL_PLACEHOLDER__" ]
-          - [ sudo, -u, __USERNAME_PLACEHOLDER__, git, config, --global, init.defaultBranch, main ]
-
-          # 7. PERFORMANCE OPTIMIZATIONS (Systemd Services)
-          - |
-            systemctl disable NetworkManager-wait-online.service
-            systemctl disable fwupd-refresh.service
-            systemctl disable kdump-tools.service
-            systemctl disable apport.service
-            systemctl disable ModemManager.service
-            systemctl disable fstrim.service
-            systemctl enable fstrim.timer
-
-          # 8. SNAP REVISION MANAGEMENT
-          - snap set system refresh.retain=2
-
-          # 9. KERNEL SERIAL PROBE DISABLING
-          - |
-            if [ -f /etc/default/grub ]; then
-              sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash 8250.nr_uarts=0"/' /etc/default/grub
-              update-grub
-            fi
-    OUTER_EOF
-
-    # --- 6. Safely inject all parameters in a single disk I/O operation ---
-    sed -i \
-      -e "s|__SSH_PUB_KEY_PLACEHOLDER__|$SSH_PUB_KEY|g" \
-      -e "s|__HASHED_PASSWORD_PLACEHOLDER__|$HASHED_PASSWORD|g" \
-      -e "s|__REAL_NAME_PLACEHOLDER__|$REAL_NAME|g" \
-      -e "s|__HOST_NAME_PLACEHOLDER__|$HOST_NAME|g" \
-      -e "s|__USERNAME_PLACEHOLDER__|$USERNAME|g" \
-      -e "s|__GIT_NAME_PLACEHOLDER__|$GIT_NAME|g" \
-      -e "s|__GIT_EMAIL_PLACEHOLDER__|$GIT_EMAIL|g" \
-      "$OUTPUT_FILE"
-
-    echo "✨ user-data and meta-data files successfully generated at $(dirname "$OUTPUT_FILE")/"
-
-    # --- 7. Export GPG Private Key & Ownertrust ---
-    echo "------------------------------------------------"
-    read -p "🔐 Do you want to export your GPG private key and ownertrust for backup? (y/N): " EXPORT_GPG
-    if [[ "$EXPORT_GPG" =~ ^[Yy]$ ]]; then
-        echo "⚙️  Exporting GPG keys for $GIT_EMAIL..."
-        PRIVATE_KEY_FILE="$(dirname "$OUTPUT_FILE")/private_key.asc"
-        OWNERTRUST_FILE="$(dirname "$OUTPUT_FILE")/ownertrust.txt"
-        
-        # We use the $GIT_EMAIL dynamically pulled from pass to identify the correct GPG key
-        gpg --armor --export-secret-keys "$GIT_EMAIL" > "$PRIVATE_KEY_FILE"
-        gpg --export-ownertrust > "$OWNERTRUST_FILE"
-        
-        # Secure the exported private key permissions so SSH/Linux doesn't complain later
-        chmod 600 "$PRIVATE_KEY_FILE"
-        
-        echo "✅ GPG private key saved to: $PRIVATE_KEY_FILE"
-        echo "✅ GPG ownertrust saved to: $OWNERTRUST_FILE"
-    fi
-    echo "------------------------------------------------"
+    cd $HOME
+    git clone git@github.com:savco2000/dotfiles.git
     ```
-2. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
 
-3. Prepare the `CIDATA` and `LIFEBOAT` USB Drives
+2. Make all the `.sh` files in the dotfiles folder executable
+
+    ```bash
+    cd $HOME/dotfiles
+    find . -type f -name "*.sh" -exec chmod +x {} +
+    ```
+3. Run `forge-host.sh`:
+
+    ```bash
+    $HOME/dotfiles/install_scripts/host/./forge-host.sh    
+    ```
+    This will:
+      - Create:
+
+        - `user-data`
+        - `meta-data`
+        - `private_key.asc`
+        - `ownertrust.txt`
+
+        files in `$HOME/dotfiles/install_scripts/host`
+      - Optionally rotates the host's password in `pass`
+      - Optionally rotates the SSH keys in `pass`
+
+4. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
+
+5. Prepare the `CIDATA` and `LIFEBOAT` USB Drives
 
     Use this workflow for the configuration USB and the backup `LIFEBOAT` USB. These commands erase the entire target drive, so confirm the device name carefully before continuing.
 
@@ -417,330 +181,24 @@ ls -l user-data meta-data
 
     - Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
 
-    - Set up SSH
-      ```bash
-      chmod 700 $HOME/.ssh
-
-      # Extract keys directly into the standard OpenSSH paths
-      mv $HOME/Lifeboat/id_ed25519* $HOME/.ssh/
-
-      # Lock down permissions to prevent "Bad owner or permissions" errors
-      chmod 600 $HOME/.ssh/id_ed25519
-      chmod 644 $HOME/.ssh/id_ed25519.pub
-      ```
-
-    - Setup Password Store
+    - Run `host_personalization.sh` to set up SSH and Password Store
 
       ```bash
-      # Explicitly bind your terminal window to the GPG subsystem
-      export GPG_TTY=$(tty)
-
-      # Execute the import command while forcing loopback mode
-      gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
-
-      # Restore your key trust mappings
-      gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
-
-      # Scan and save the GitHub SSH key
-      ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-      # Clone the Password Store
-      git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
+      cd $HOME/dotfiles/install_scripts/host/
+      ./host_personalization.sh
       ```
-
-    - Clean up Lifeboat files
-      ```bash
-      rm -r $HOME/Lifeboat
-      ```
-  **Phase 2 checkpoint:**
-
-  ```bash
-  # Check SSH connection to GitHub
-  ssh -T git@github.com
-
-  # Check connection to Password Store
-  # Choose "Save in Password Manager" if prompted
-  pass show ssh/public-key >/dev/null && echo "pass recovered"  
-  ```
-
 ## Phase 3: The Virtual Lab
 
-### 1. Create an executable installation script
-
-1. Create `deploy-vm.sh` at `~/Downloads/`
-
-    ```bash
-    #!/bin/bash
-    # Make executable: chmod +x deploy-vm.sh
-    # Usage: sudo ./deploy-vm.sh <config.yaml | vm-name> [-m memory_mib] [-c vcpus] [-s disk_gib] [-d] [-f]
-    # Default: 4096 MiB RAM, 4 vCPUs, 40 GiB Disk (Linked Clone)
-
-    # --- 1. Dynamic Variables & Defaults ---
-    TARGET=$1
-    if [ -z "$TARGET" ]; then
-        echo "❌ Error: No target specified."
-        echo "Usage: $0 <user-data.yaml | vm-name> [-m memory] [-c vcpus] [-s size_gb] [-d] [-f]"
-        exit 1
-    fi
-
-    # Smart Input Parsing: Determine if target is a file or a VM name
-    if [[ "$TARGET" =~ \.(yaml|yml)$ ]]; then
-        # Input is a file path
-        USER_DATA="$TARGET"
-        FILENAME=$(basename "$TARGET")
-        PREFIX=$(echo "$FILENAME" | sed -E 's/-user-data\.(yaml|yml)$//')
-        VM_NAME="${PREFIX}-vm"
-    else
-        # Input is a string (VM name or prefix)
-        if [[ "$TARGET" == *-vm ]]; then
-            VM_NAME="$TARGET"
-            PREFIX="${TARGET%-vm}"
-        else
-            PREFIX="$TARGET"
-            VM_NAME="${PREFIX}-vm"
-        fi
-        # Guess the local user-data path in case they are creating rather than destroying
-        USER_DATA="./${PREFIX}-user-data.yaml"
-    fi
-
-    MEM=4096
-    CPUS=4
-    DISK=40
-
-    shift
-
-    # --- 2. Flag Handling ---
-    while getopts "dfm:c:s:" opt; do
-      case $opt in
-        d)
-          echo "🔥 Self-Destruct Initiated for $VM_NAME..."
-          sudo virsh destroy "$VM_NAME" 2>/dev/null
-          sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
-          sudo rm -f "/var/lib/libvirt/images/$VM_NAME-meta-data" "/var/lib/libvirt/images/$VM_NAME-seed.iso"
-          echo "✨ Environment cleared."
-          exit 0
-          ;;
-        f)
-          echo "♻️ Force flag detected. Removing local base image..."
-          sudo rm -f "/var/lib/libvirt/images/resolute-base.img"
-          ;;
-        m) MEM=$OPTARG ;;
-        c) CPUS=$OPTARG ;;
-        s) DISK=$OPTARG ;;
-        \?) exit 1 ;;
-      esac
-    done
-
-    # --- 3. Internal Paths ---
-    LIBVIRT_DIR="/var/lib/libvirt/images"
-    BASE_IMG="$LIBVIRT_DIR/resolute-base.img"
-    VM_DISK="$LIBVIRT_DIR/$VM_NAME.qcow2"
-    META_DATA="$LIBVIRT_DIR/$VM_NAME-meta-data"
-    SEED_ISO="$LIBVIRT_DIR/$VM_NAME-seed.iso"
-    BASE_IMG_URL="https://cloud-images.ubuntu.com/resolute/current/resolute-server-cloudimg-amd64v3.img"
-    SHA_URL="https://cloud-images.ubuntu.com/resolute/current/SHA256SUMS"
-
-    # --- 4. Pre-Flight Checks ---
-    if [ ! -f "$USER_DATA" ]; then
-        echo "❌ Error: Configuration file '$USER_DATA' not found."
-        exit 1
-    fi
-
-    if [ "$EUID" -ne 0 ]; then 
-      echo "Please run as root (sudo) for deployment"
-      exit
-    fi
-
-    # Detect the real user who invoked sudo and discover their real home directory
-    REAL_USER=${SUDO_USER:-$USER}
-    REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
-
-    # --- 5. Synchronize & Verify Base Image ---
-    if [ ! -f "$BASE_IMG" ]; then
-        echo "📡 Downloading Ubuntu Cloud Image..."
-        wget -c --no-verbose -P "$LIBVIRT_DIR" "$BASE_IMG_URL"
-        mv "$LIBVIRT_DIR/resolute-server-cloudimg-amd64v3.img" "$BASE_IMG" 2>/dev/null
-    fi
-
-    echo "🛡️ Verifying integrity..."
-    curl -s "$SHA_URL" | grep "resolute-server-cloudimg-amd64v3.img" > /tmp/sha256
-    sed -i "s/resolute-server-cloudimg-amd64v3.img/resolute-base.img/" /tmp/sha256
-    (cd "$LIBVIRT_DIR" && sha256sum --check --status /tmp/sha256) || { echo "❌ Checksum failed!"; exit 1; }
-
-    # --- 6. Provision & Seed ---
-    echo "🧹 Cleaning up existing $VM_NAME resources..."
-    sudo virsh destroy "$VM_NAME" 2>/dev/null
-    sudo virsh undefine "$VM_NAME" --remove-all-storage 2>/dev/null
-
-    echo "🌱 Generating Cloud-Init seed..."
-    cat <<EOF > "$META_DATA"
-    instance-id: $VM_NAME-$(date +%s)
-    local-hostname: $VM_NAME
-    EOF
-    cloud-localds "$SEED_ISO" "$USER_DATA" "$META_DATA"
-
-    echo "💾 Creating linked clone: $VM_DISK (${DISK}GB)..."
-    sudo qemu-img create -f qcow2 -b "$BASE_IMG" -F qcow2 "$VM_DISK" "${DISK}G"
-
-    # --- 7. Launch ---
-    echo "🚀 Launching $VM_NAME ($MEM MiB RAM, $CPUS vCPUs)..."
-    virt-install \
-      --name "$VM_NAME" \
-      --osinfo ubuntu-lts-latest \
-      --cpu host-model \
-      --memory "$MEM" \
-      --vcpus "$CPUS" \
-      --import \
-      --disk path="$VM_DISK" \
-      --disk path="$SEED_ISO",device=cdrom \
-      --network network=default \
-      --graphics none \
-      --noautoconsole
-
-    # --- 8. Post-Flight: Monitor the Black Box ---
-    echo "⏳ Waiting for VM to claim an IP..."
-    MAX_RETRIES=30
-    COUNT=0
-    while [ -z "${VM_IP:-}" ] && [ $COUNT -lt $MAX_RETRIES ]; do
-        VM_IP=$(virsh domifaddr "$VM_NAME" | grep -oE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" || true)
-        sleep 2
-        ((COUNT++))
-    done
-
-    if [ -z "${VM_IP:-}" ]; then
-        echo "⚠️ IP detection timed out. Check manually with 'virsh domifaddr $VM_NAME'."
-        exit 1
-    fi
-
-    echo "🚀 $VM_NAME is live at $VM_IP. Waiting for configuration to finish..."
-
-    ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-        -o ConnectTimeout=5 devuser@$VM_IP "cloud-init status --wait"
-
-    # --- 9. Automated SSH Configuration ---
-    echo "⚙️  Wiring up SSH configuration for $VM_NAME..."
-
-    # Ensure the modular directory exists in the true invoking user's home folder
-    mkdir -p "$REAL_HOME/.ssh/conf.d"
-
-    # Create or overwrite the VM's specific config file path dynamically
-    cat << EOF > "$REAL_HOME/.ssh/conf.d/$VM_NAME"
-    Host $VM_NAME
-      HostName $VM_IP
-      User devuser
-      IdentityFile ~/.ssh/id_ed25519
-      ForwardAgent yes
-      IdentitiesOnly yes
-      StrictHostKeyChecking no
-      UserKnownHostsFile /dev/null
-    EOF
-
-    # Ensure permissions and system ownership are handed back to the normal user context
-    chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.ssh/conf.d"
-    chmod 700 "$REAL_HOME/.ssh/conf.d"
-    chmod 600 "$REAL_HOME/.ssh/conf.d/$VM_NAME"
-
-    echo "------------------------------------------------"
-    echo "✅ $VM_NAME is FULLY PROVISIONED and ready!"
-    echo "------------------------------------------------"
-    echo "Please wait a couple of minutes before connecting by typing:"
-    echo "ssh $VM_NAME"
-    echo "as the installation may still be completing."
-    echo "------------------------------------------------"
-    ```
-
-2. Make `deploy-vm.sh` executable
-
-    ```bash
-    chmod +x deploy-vm.sh
-    ```
-
-### 2. Create the Virtual Machines
+### 1. Create the Virtual Machines
 
 #### 1. Create the `dev-vm` virtual machine
 
-  - Create `create-dev-user-data.sh` at `~/Downloads/`
+  - Run `create-dev-user-data.sh` to generate `dev-user-data.yaml` at `$HOME/dotfiles/install_scripts/vm/`
 
     ```bash
-    #!/bin/bash
-    # Make executable: create-dev-user-data.sh
-    # Usage: ./create-dev-user-data.sh
-
-    # Enable strict error handling: fail fast on errors or unset variables
-    set -euo pipefail
-
-    # Dynamically set the output path to the exact directory where this script resides
-    OUTPUT_FILE="$(dirname "$0")/dev-user-data.yaml"
-
-    # 1. Dynamically pull identity and SSH keys from the password manager
-    # Fetch git secrets once to halve the GPG decryption overhead
-    GIT_SECRETS=$(pass show github/personal)
-    GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-    GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
-
-    SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-    USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
-
-    # 2. Generate the configuration file with variables injected directly
-    # (Unquoted EOF allows Bash to inject variables directly without needing sed)
-    cat << EOF > "$OUTPUT_FILE"
-    #cloud-config
-    users:
-      - name: $USERNAME
-        groups: [sudo]
-        shell: /bin/bash
-        sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo
-        lock_passwd: true # 🔒 Locks password authentication entirely
-        ssh_authorized_keys:
-          - $SSH_PUB_KEY
-
-    packages:
-      - npm
-      - docker.io
-      - docker-buildx
-      - git
-      - postgresql-client
-      - curl
-      - jq
-      - htop
-      - ncdu
-      - byobu
-      - xsel
-
-    runcmd:
-      # 1. Adding the user to the docker group safely after package installation
-      - usermod -aG docker $USERNAME
-      
-      # 2. Configuring Git identity for $USERNAME
-      - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
-      - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
-      - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
-
-      # 3. Enable Byobu auto-launch on login for $USERNAME
-      - [ sudo, -u, $USERNAME, byobu-enable ]
-
-      # 4. Pre-seed GitHub SSH keys to prevent interactive authenticity prompts for $USERNAME
-      - [ sudo, -u, $USERNAME, bash, -c, 'ssh-keyscan github.com >> ~/.ssh/known_hosts' ]
-
-      # 5. Automatically clone core repositories into the user's home directory
-      - [ sudo, -u, $USERNAME, bash, -c, 'cd /home/$USERNAME && git clone git@github.com:savco2000/private-cloud-runbook.git' ]
-      - [ sudo, -u, $USERNAME, bash, -c, 'cd /home/$USERNAME && git clone git@github.com:savco2000/tabiri-website.git' ]
-    EOF
-
-    echo "✨ VM user-data file successfully generated at $OUTPUT_FILE"
-    ```
-  - Make `create-dev-user-data.sh` executable
-
-    ```bash
-    chmod +x create-dev-user-data.sh
-    ```
-
-  - Execute `create-dev-user-data.sh` to create `dev-user-data.yaml`
-
-    ```bash
+    cd $HOME/dotfiles/install_scripts/vm/
     ./create-dev-user-data.sh
     ```
-
   - Run the following command to create the `dev-vm` virtual machine
 
     ```bash
@@ -778,48 +236,11 @@ ls -l user-data meta-data
       - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
 
         ```bash
-        #!/bin/bash
-        # Target extraction tool for fresh host builds
-        # Make executable: chmod +x get-vs-code-uris.sh
-        # Usage: sudo ./get-vs-code-uris.sh
-
-        DB_PATH="$HOME/.config/Code/User/globalStorage/state.vscdb"
-
-        if [ ! -f "$DB_PATH" ]; then
-            echo "❌ Error: VS Code storage database not found at $DB_PATH"
-            exit 1
-        fi
-
-        echo "=========================================================="
-        echo "🎯 TARGET DEVCONTAINER URIS EXTRACTED FROM CACHE"
-        echo "=========================================================="
-        echo ""
-
-        # Extract unique instances containing the dev-container hex signature
-        strings "$DB_PATH" | grep -E -o "dev-container\+[0-9a-fA-F]+@ssh-remote\+dev-vm" | sort -u | while read -r line; do
-            
-            # Isolate just the raw Hex string payload
-            HEX_STRING=$(echo "$line" | sed -E 's/dev-container\+([0-9a-fA-F]+)@.*/\1/')
-            
-            # Decode the hex data natively to catch the repository directory name
-            FOLDER_NAME=$(python3 -c "import json; d=bytes.fromhex('$HEX_STRING').decode('utf-8'); print(json.loads(d).get('hostPath','').split('/')[-1])" 2>/dev/null)
-            
-            # Fallback to placeholder if parsing drops out
-            if [ -z "$FOLDER_NAME" ]; then
-                FOLDER_NAME="your-project"
-            fi
-
-            # Render a clean, scannable layout
-            echo "📂 PROJECT: $FOLDER_NAME"
-            echo "🔑 Hex Key String:"
-            echo "$HEX_STRING"
-            echo ""
-            echo "📋 Ready-to-use Shell Alias (Copy-Paste into ~/.bashrc or ~/.zshrc):"
-            echo "alias dev-${FOLDER_NAME,,}='code --folder-uri \"vscode-remote://dev-container+${HEX_STRING}@ssh-remote+dev-vm/workspaces/${FOLDER_NAME}\"'"
-            echo "----------------------------------------------------------"
-        done
+        cd $HOME/dotfiles/install_scripts/vm/
+        ./get-vs-code-uris.sh
         ```
-      - Add these entries to your `~/.bashrc` file.
+      - Edit this entry to your `~/.bashrc` file with the retrieved HEX_STRINGS.
+
         ```bash
         # --- TABIRI CONTAINER ENGINE ---
         _dev_tabiri() {
@@ -838,39 +259,6 @@ ls -l user-data meta-data
             code --folder-uri "vscode-remote://dev-container+NEW_HEX_STRING_HERE@ssh-remote+dev-vm/workspaces/tabiri-website"
         }
         alias dev-tabiri=_dev_tabiri
-
-        # --- GRACEFUL ENVIRONMENT TEARDOWN ---
-        _dev_stop() {
-            echo "🛑 Initiating graceful tear-down of your remote development stack..."
-
-            # 1. Identify and gracefully close local VS Code windows matching your remote VM
-            if command -v wmctrl &> /dev/null; then
-                echo "🪟 Closing local VS Code DevContainer windows..."
-                
-                # Scan active desktop windows for your devcontainer strings and close them cleanly
-                wmctrl -l | grep -E "Dev Container|@.*dev-vm" | awk '{print $1}' | while read -r win_id; do
-                    wmctrl -i -c "$win_id"
-                done
-                sleep 1
-            fi
-
-            # 2. Check if the VM is running, and shut it down cleanly
-            if virsh domstate dev-vm 2>/dev/null | grep -q "running"; then
-                echo "🔌 Sending ACPI shutdown signal to dev-vm..."
-                virsh shutdown dev-vm
-
-                # 3. Wait loop until the KVM domain has fully turned off
-                echo -n "⏳ Waiting for VM to safely power down"
-                while virsh domstate dev-vm 2>/dev/null | grep -q "running"; do
-                    printf "."
-                    sleep 1
-                done
-                echo -e "\n🔒 dev-vm has successfully shut down. Environment cold and secure."
-            else
-                echo "ℹ️ dev-vm is already powered off."
-            fi
-        }
-        alias dev-stop=_dev_stop
         ```
     - To disable **Workspace Restoration** in Visual Studio Code:
         - Open the Command Palette (`Ctrl + Shift + P`).
@@ -883,90 +271,13 @@ ls -l user-data meta-data
 
 #### 2. Create the `openclaw-vm` virtual machine
 
-  - Create `create-openclaw-user-data.sh` file at `~/Downloads/`
+  - Run `create-openclaw-user-data.sh` to generate `openclaw-user-data.yaml` at `$HOME/dotfiles/install_scripts/vm/`
 
     ```bash
-    #!/bin/bash
-    # Enable strict error handling: fail fast on errors or unset variables
-    set -euo pipefail
-
-    # Dynamically set the output path to the exact directory where this script resides
-    OUTPUT_FILE="$(dirname "$0")/openclaw-user-data.yaml"
-
-    # 1. Dynamically pull identity and SSH keys from the password manager
-    # Fetch git secrets once to halve the GPG decryption overhead
-    GIT_SECRETS=$(pass show github/personal)
-    GIT_NAME=$(echo "$GIT_SECRETS" | grep "^username:" | cut -d' ' -f2-)
-    GIT_EMAIL=$(echo "$GIT_SECRETS" | grep "^email:" | cut -d' ' -f2)
-
-    SSH_PUB_KEY=$(pass show ssh/public-key | tr -d '\n')
-    USERNAME=$(pass show host | grep "^username:" | cut -d' ' -f2-)
-
-    # 2. Generate the configuration file with variables injected
-    # (Unquoted EOF allows Bash to inject variables directly without needing sed)
-    cat << EOF > "$OUTPUT_FILE"
-    #cloud-config
-    users:
-      - name: $USERNAME
-        groups: [sudo]
-        shell: /bin/bash
-        sudo: ALL=(ALL) NOPASSWD:ALL # Explicitly grant $USERNAME passwordless sudo access:
-        lock_passwd: true # 🔒 Locks password authentication entirely
-        ssh_authorized_keys:
-          - $SSH_PUB_KEY
-
-    packages:
-      - docker.io
-      - docker-buildx
-      - nodejs
-      - npm
-      - git
-      - curl
-      - jq
-      - tcpdump
-      - auditd
-      - byobu
-
-    runcmd:
-      # 1. Safely attach $USERNAME to docker now that the package is installed
-      - [ usermod, -aG, docker, $USERNAME ]
-      
-      # 2. System-wide global installation of the OpenClaw CLI
-      - [ npm, install, -g, openclaw@latest ]
-      
-      # 3. Provision the workspace securely using $USERNAME's explicit context
-      - [ sudo, -u, $USERNAME, mkdir, -p, /home/$USERNAME/claw-workspace ]
-
-      # 4. Configuring Git identity for $USERNAME
-      - [ sudo, -u, $USERNAME, git, config, --global, user.name, "$GIT_NAME" ]
-      - [ sudo, -u, $USERNAME, git, config, --global, user.email, "$GIT_EMAIL" ]
-      - [ sudo, -u, $USERNAME, git, config, --global, init.defaultBranch, main ]
-
-      # 5. Enable Byobu auto-launch on login for $USERNAME
-      - [ sudo, -u, $USERNAME, byobu-enable ]
-
-      # 6. Pre-seed GitHub SSH keys to prevent interactive authenticity prompts for $USERNAME
-      - [ sudo, -u, $USERNAME, bash, -c, 'ssh-keyscan github.com >> ~/.ssh/known_hosts' ]
-    EOF
-
-    echo "✨ OpenClaw user-data file successfully generated at $OUTPUT_FILE"
-    ```
-
-  - Make `create-openclaw-user-data.sh` executable
-
-    ```bash
-    chmod +x create-openclaw-user-data.sh
-    ```
-
-  - Execute `create-openclaw-user-data.sh` to create `openclaw-user-data.yaml`
-
-    ```bash
+    cd $HOME/dotfiles/install_scripts/vm/
     ./create-openclaw-user-data.sh
     ```
-
-  - Create the `openclaw-vm` virtual machine
-
-    Run the following command to create `openclaw-vm`
+  - Run the following command to create the `dev-vm` virtual machine
 
     ```bash
     sudo ./deploy-vm.sh openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
