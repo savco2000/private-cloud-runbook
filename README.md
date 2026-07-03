@@ -72,16 +72,24 @@ pass show host >/dev/null && echo "pass entry ok"
     git clone git@github.com:savco2000/dotfiles.git
     ```
 
-2. Make all the `.sh` files in the dotfiles folder executable
+2. Activate symlinks
 
     ```bash
     cd $HOME/dotfiles
-    find . -type f -name "*.sh" -exec chmod +x {} +
+    stow .
     ```
-3. Run `forge-host.sh`:
+
+3. Make all the `.sh` files in the `install_scripts` folder executable
 
     ```bash
-    $HOME/dotfiles/install_scripts/host/./forge-host.sh    
+    cd $HOME/install_scripts
+    find . -type f -name "*.sh" -exec chmod +x {} +
+    ```
+
+4. Run `forge-host.sh`:
+
+    ```bash
+    $HOME/install_scripts/host/./forge-host.sh    
     ```
     This will:
       - Create:
@@ -91,13 +99,13 @@ pass show host >/dev/null && echo "pass entry ok"
         - `private_key.asc`
         - `ownertrust.txt`
 
-        files in `$HOME/dotfiles/install_scripts/host`
+        files in `$HOME/install_scripts/host`
       - Optionally rotates the host's password in `pass`
       - Optionally rotates the SSH keys in `pass`
 
-4. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
+5. **The Installer USB:** Flash the Ubuntu 26.04 LTS (Resolute Raccoon) Desktop ISO to a USB drive using Startup Disk Creator.
 
-5. Prepare the `CIDATA` and `LIFEBOAT` USB Drives
+6. Prepare the `CIDATA` and `LIFEBOAT` USB Drives
 
     Use this workflow for the configuration USB and the backup `LIFEBOAT` USB. These commands erase the entire target drive, so confirm the device name carefully before continuing.
 
@@ -143,15 +151,9 @@ pass show host >/dev/null && echo "pass entry ok"
       - `-n CIDATA` or `-n LIFEBOAT`: sets the volume label the host will look for.
       - `/dev/sda`: the target USB drive. Replace this with the correct base device from `lsblk`.
 
-4. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB drive.
+7. Copy `user-data` and `meta-data` files created by the `forge-host.sh` script above into the CIDATA USB drive.
 
-5. Copy `private_key.asc` and `ownertrust.txt` to the `LIFEBOAT` USB drive. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
-
-**Phase 0 checkpoint:**
-
-```bash
-ls -l user-data meta-data
-```
+8. Copy `private_key.asc` and `ownertrust.txt` to the `LIFEBOAT` USB drive. These files let you import your private key and restore your key trust mappings in the new machine's `pass`, so **keep this USB safe!**
 
 ## Phase 1: The "Thin Host" Installation
 
@@ -181,22 +183,34 @@ ls -l user-data meta-data
 
     - Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
 
+    - Activate symlinks
+
+      ```bash
+      # Backup the original .bashrc file
+      mv $HOME/.bashrc $HOME/.bashrc.bak
+
+      cd $HOME/dotfiles
+      stow .
+      ```
+
     - Run `host_personalization.sh` to set up SSH and Password Store
 
       ```bash
-      cd $HOME/dotfiles/install_scripts/host/
+      cd $HOME/install_scripts/host/
       ./host_personalization.sh
       ```
+
+    
 ## Phase 3: The Virtual Lab
 
 ### 1. Create the Virtual Machines
 
 #### 1. Create the `dev-vm` virtual machine
 
-  - Run `create-dev-user-data.sh` to generate `dev-user-data.yaml` at `$HOME/dotfiles/install_scripts/vm/`
+  - Run `create-dev-user-data.sh` to generate `dev-user-data.yaml` at `$HOME/install_scripts/vm/`
 
     ```bash
-    cd $HOME/dotfiles/install_scripts/vm/
+    cd $HOME/install_scripts/vm/
     ./create-dev-user-data.sh
     ```
   - Run the following command to create the `dev-vm` virtual machine
@@ -236,7 +250,7 @@ ls -l user-data meta-data
       - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
 
         ```bash
-        cd $HOME/dotfiles/install_scripts/vm/
+        cd $HOME/install_scripts/vm/
         ./get-vs-code-uris.sh
         ```
       - Edit this entry to your `~/.bashrc` file with the retrieved HEX_STRINGS.
@@ -271,10 +285,10 @@ ls -l user-data meta-data
 
 #### 2. Create the `openclaw-vm` virtual machine
 
-  - Run `create-openclaw-user-data.sh` to generate `openclaw-user-data.yaml` at `$HOME/dotfiles/install_scripts/vm/`
+  - Run `create-openclaw-user-data.sh` to generate `openclaw-user-data.yaml` at `$HOME/install_scripts/vm/`
 
     ```bash
-    cd $HOME/dotfiles/install_scripts/vm/
+    cd $HOME/install_scripts/vm/
     ./create-openclaw-user-data.sh
     ```
   - Run the following command to create the `dev-vm` virtual machine
