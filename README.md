@@ -290,8 +290,7 @@ pass show host >/dev/null && echo "pass entry ok"
       - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
 
         ```bash
-        cd $HOME/install_scripts/vm/
-        ./get-vs-code-uris.sh
+        $HOME/install_scripts/vm/./get-vs-code-uris.sh
         ```
       - Edit this entry to your `~/.bashrc` file with the retrieved HEX_STRINGS.
 
