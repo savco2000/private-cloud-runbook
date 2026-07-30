@@ -327,13 +327,12 @@ pass show host >/dev/null && echo "pass entry ok"
   - Run `create-openclaw-user-data.sh` to generate `openclaw-user-data.yaml` at `$HOME/install_scripts/vm/`
 
     ```bash
-    cd $HOME/install_scripts/vm/
-    ./create-openclaw-user-data.sh
+    $HOME/install_scripts/vm/./create-openclaw-user-data.sh
     ```
   - Run the following command to create the `dev-vm` virtual machine
 
     ```bash
-    sudo ./deploy-vm.sh openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
+    sudo $HOME/install_scripts/vm/./deploy-vm.sh $HOME/install_scripts/vm/openclaw-user-data.yaml -m 4096 -c 4 -s 40 -f
     ```
 
   - SSH into `openclaw-vm`
