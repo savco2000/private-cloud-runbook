@@ -175,30 +175,71 @@ pass show host >/dev/null && echo "pass entry ok"
 
 1. Once you log in to your fresh host, establish your sovereignty by importing your GPG private key and restore key trust mappings.
 
-    - Create the Lifeboat folder
+    - Plug in the LIFEBOAD USB
         
+    - Run the following script
+
         ```bash
-        mkdir $HOME/Lifeboat
+        #!/bin/bash
+        # Enable strict error handling: fail fast on errors or unset variables
+        set -euo pipefail
+
+        # Copy contents of LIFEBOAT USB
+        # Define paths
+        SOURCE_DIR="/run/media/$USER/LIFEBOAT"
+        TARGET_DIR="$HOME/Lifeboat"
+
+        # 1. Check if the LIFEBOAT drive is actually mounted
+        if [ ! -d "$SOURCE_DIR" ]; then
+            echo "Error: LIFEBOAT drive is not mounted at $SOURCE_DIR"
+            exit 1
+        fi
+
+        # 2. Create the target directory if it does not exist
+        mkdir -p "$TARGET_DIR"
+
+        # 3. Copy the contents using rsync (recommended over cp)
+        echo "LIFEBOAT detected. Copying files to $TARGET_DIR..."
+        rsync -av --progress "$SOURCE_DIR/" "$TARGET_DIR/"
+
+        echo "Backup complete!"
+
+        # Setup SSH
+        chmod 700 $HOME/.ssh
+
+        # Extract keys directly into the standard OpenSSH paths
+        mv $HOME/Lifeboat/id_ed25519* $HOME/.ssh/
+
+        # Lock down permissions to prevent "Bad owner or permissions" errors
+        chmod 600 $HOME/.ssh/id_ed25519
+        chmod 644 $HOME/.ssh/id_ed25519.pub
+
+        # Setup Password Store
+        # Explicitly bind your terminal window to the GPG subsystem
+        export GPG_TTY=$(tty)
+
+        # Execute the import command while forcing loopback mode
+        gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
+
+        # Restore your key trust mappings
+        gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
+
+        # Scan and save the GitHub SSH key
+        ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+        # Clone the Password Store
+        git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
+
+        #CLone dotfiles repository
+        git clone git@github.com:savco2000/dotfiles.git $HOME/dotfiles
+
+        # Activate symlinks
+        cd $HOME/dotfiles
+        stow .
+
+        # Clean up
+        rm -r $HOME/Lifeboat
         ```
-
-    - Copy contents of `LIFEBOAT` USB from **Phase 0** to `$HOME/Lifeboat`
-
-    - Activate symlinks
-
-      ```bash
-      # Backup the original .bashrc file
-      mv $HOME/.bashrc $HOME/.bashrc.bak
-
-      cd $HOME/dotfiles
-      stow .
-      ```
-
-    - Run `host_personalization.sh` to set up SSH and Password Store
-
-      ```bash
-      cd $HOME/install_scripts/host/
-      ./host_personalization.sh
-      ```
 
     
 ## Phase 3: The Virtual Lab
