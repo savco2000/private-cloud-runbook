@@ -243,7 +243,7 @@ pass show host >/dev/null && echo "pass entry ok"
         rm -rf "$TARGET_DIR"
         echo "Cleanup complete!"
         ```
-      - Activate symlinks
+   - Activate symlinks
         ```bash
         cd $HOME/dotfiles
         stow .
