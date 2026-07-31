@@ -177,7 +177,7 @@ pass show host >/dev/null && echo "pass entry ok"
 
     - Plug in the LIFEBOAD USB
         
-    - Run the following script
+    - Copy the following script and save it to `$HOME/Downloads/host_personalization.sh`
 
         ```bash
         #!/bin/bash
@@ -243,6 +243,10 @@ pass show host >/dev/null && echo "pass entry ok"
         rm -rf "$TARGET_DIR"
         echo "Cleanup complete!"
         ```
+   - Run `host_personalization.sh`
+         ```bash
+         $HOME/Downloads/./host_personalization.sh
+         ```
    - Activate symlinks
         ```bash
         cd $HOME/dotfiles
