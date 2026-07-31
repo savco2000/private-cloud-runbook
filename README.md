@@ -183,62 +183,66 @@ pass show host >/dev/null && echo "pass entry ok"
         #!/bin/bash
         # Enable strict error handling: fail fast on errors or unset variables
         set -euo pipefail
-
-        # Copy contents of LIFEBOAT USB
-        # Define paths
+        
         SOURCE_DIR="/run/media/$USER/LIFEBOAT"
         TARGET_DIR="$HOME/Lifeboat"
-
-        # 1. Check if the LIFEBOAT drive is actually mounted
+        DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+        
         if [ ! -d "$SOURCE_DIR" ]; then
             echo "Error: LIFEBOAT drive is not mounted at $SOURCE_DIR"
             exit 1
         fi
-
-        # 2. Create the target directory if it does not exist
+        
         mkdir -p "$TARGET_DIR"
-
-        # 3. Copy the contents using rsync (recommended over cp)
+        
         echo "LIFEBOAT detected. Copying files to $TARGET_DIR..."
-        rsync -av --progress "$SOURCE_DIR/" "$TARGET_DIR/"
-
+        rsync -av "$SOURCE_DIR/" "$TARGET_DIR/"
+        
         echo "Backup complete!"
-
+        
         # Setup SSH
-        chmod 700 $HOME/.ssh
-
-        # Extract keys directly into the standard OpenSSH paths
-        mv $HOME/Lifeboat/id_ed25519* $HOME/.ssh/
-
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
+        
+        if compgen -G "$TARGET_DIR/id_ed25519*" > /dev/null; then
+            mv "$TARGET_DIR"/id_ed25519* "$HOME/.ssh/"
+        fi
+        
         # Lock down permissions to prevent "Bad owner or permissions" errors
-        chmod 600 $HOME/.ssh/id_ed25519
-        chmod 644 $HOME/.ssh/id_ed25519.pub
-
+        if [ -f "$HOME/.ssh/id_ed25519" ]; then
+            chmod 600 "$HOME/.ssh/id_ed25519"
+        fi
+        if [ -f "$HOME/.ssh/id_ed25519.pub" ]; then
+            chmod 644 "$HOME/.ssh/id_ed25519.pub"
+        fi
+        
         # Setup Password Store
         # Explicitly bind your terminal window to the GPG subsystem
-        export GPG_TTY=$(tty)
-
+        export GPG_TTY="$(tty)"
+        
         # Execute the import command while forcing loopback mode
-        gpg --pinentry-mode loopback --import $HOME/Lifeboat/private_key.asc
-
+        gpg --pinentry-mode loopback --import "$TARGET_DIR/private_key.asc"
+        
         # Restore your key trust mappings
-        gpg --import-ownertrust $HOME/Lifeboat/ownertrust.txt
-
+        gpg --import-ownertrust "$TARGET_DIR/ownertrust.txt"
+        
         # Scan and save the GitHub SSH key
         ssh-keyscan github.com >> ~/.ssh/known_hosts
-
+        
         # Clone the Password Store
         git clone git@github.com:savco2000/the-black-box.git $HOME/.password-store
-
-        #CLone dotfiles repository
-        git clone git@github.com:savco2000/dotfiles.git $HOME/dotfiles
-
+        
+        if [ -f "$HOME/.bashrc" ]; then
+            mv "$HOME/.bashrc" "$HOME/.bashrc.bak"
+        fi
+        
         # Activate symlinks
-        cd $HOME/dotfiles
+        cd "$DOTFILES_DIR"
         stow .
-
+        
         # Clean up
-        rm -r $HOME/Lifeboat
+        rm -rf "$TARGET_DIR"
+        echo "Cleanup complete!"
         ```
 
     
