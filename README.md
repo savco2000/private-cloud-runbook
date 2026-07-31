@@ -239,15 +239,15 @@ pass show host >/dev/null && echo "pass entry ok"
         # Clone dotfiles repository
         git clone git@github.com:savco2000/dotfiles.git $DOTFILES_DIR
         
-        # Activate symlinks
-        cd "$DOTFILES_DIR"
-        stow .
-        
         # Clean up
         rm -rf "$TARGET_DIR"
         echo "Cleanup complete!"
         ```
-
+      - Activate symlinks
+        ```bash
+        cd $HOME/dotfiles
+        stow .
+        ```
     
 ## Phase 3: The Virtual Lab
 
