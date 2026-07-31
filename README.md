@@ -186,7 +186,7 @@ pass show host >/dev/null && echo "pass entry ok"
         
         SOURCE_DIR="/run/media/$USER/LIFEBOAT"
         TARGET_DIR="$HOME/Lifeboat"
-        DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+        DOTFILES_DIR="$HOME/dotfiles"
         
         if [ ! -d "$SOURCE_DIR" ]; then
             echo "Error: LIFEBOAT drive is not mounted at $SOURCE_DIR"
@@ -235,6 +235,9 @@ pass show host >/dev/null && echo "pass entry ok"
         if [ -f "$HOME/.bashrc" ]; then
             mv "$HOME/.bashrc" "$HOME/.bashrc.bak"
         fi
+        
+        # Clone dotfiles repository
+        git clone git@github.com:savco2000/dotfiles.git $DOTFILES_DIR
         
         # Activate symlinks
         cd "$DOTFILES_DIR"
