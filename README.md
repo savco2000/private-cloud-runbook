@@ -298,7 +298,7 @@ pass show host >/dev/null && echo "pass entry ok"
         - In Visual Studio Code, click on the "Remote Explorer" icon and click on "Connect in Current Window". 
         - Once the remote repostory opens, it will ask you to "Reopen in DevContainer", select "Yes". Close the remote rository by clicking on "File" > "Close Remote Connection"
 
-      - Extract DevContainer URIs from Visual Studio Code's storage database by running this `get-vs-code-uris.sh` script.
+      - Extract DevContainer URIs from Visual Studio Code's storage database by running this `install-dev-vm-commands.sh` script.
 
         ```bash
         $HOME/install_scripts/vm/./get-vs-code-uris.sh
