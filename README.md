@@ -59,6 +59,10 @@ Recommended pre-flight checks:
 ```bash
 command -v pass gpg ssh-keygen virsh qemu-img cloud-localds >/dev/null && echo "tooling ok"
 pass show host >/dev/null && echo "pass entry ok"
+
+# You are good to go if the result is:
+# tooling ok
+# pass entry ok
 ```
 
 ---
