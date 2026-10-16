@@ -181,7 +181,7 @@ pass show host >/dev/null && echo "pass entry ok"
 
     - Plug in the LIFEBOAD USB
         
-    - Copy the following script and save it to `$HOME/Downloads/host_personalization.sh`
+    - Copy the script below and save it to `$HOME/Downloads/host_personalization.sh`
 
         ```bash
         #!/bin/bash
